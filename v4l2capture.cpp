@@ -1,3 +1,9 @@
+/****************************************************************************
+*
+* Copyright (C) 2019-2020 MiaoQingrui. All rights reserved.
+* Author: 缪庆瑞 <justdoit_mqr@163.com>
+*
+****************************************************************************/
 /*
  *@author:  缪庆瑞
  *@date:    2019.08.07
@@ -120,9 +126,10 @@ void V4L2Capture::ioctlQueryStd()
     printf("\nAnalog  video standard:%llx\n",std);
 }
 /*
- *@brief:   显示设备支持的帧格式(v4l2_fmtdesc)，这里查的是采集帧支持的格式
+ *@brief:   显示设备支持的帧格式(v4l2_fmtdesc)以及对应格式的分辨率(v4l2_frmsizeenum)
+ * 这里查的是采集帧支持的帧格式和分辨率。
  *@author:  缪庆瑞
- *@date:    2019.08.07
+ *@date:    2020.08.15
  */
 void V4L2Capture::ioctlEnumFmt()
 {
@@ -138,7 +145,7 @@ void V4L2Capture::ioctlEnumFmt()
     fmtdesc.index = 0;
     fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;//表示 采集帧
     printf("\nSupport Format:\n");
-    //显示所有支持的视频采集帧格式
+    /*显示所有支持的视频采集帧格式*/
     while(ioctl(cameraFd,VIDIOC_ENUM_FMT,&fmtdesc) != -1)
     {
         printf("flags=%d\tdescription=%s\t"
@@ -146,6 +153,27 @@ void V4L2Capture::ioctlEnumFmt()
                fmtdesc.flags,fmtdesc.description,
                fmtdesc.pixelformat&0xFF,(fmtdesc.pixelformat>>8)&0xFF,
                (fmtdesc.pixelformat>>16)&0xFF,(fmtdesc.pixelformat>>24)&0xFF);
+        /*显示对应采集帧格式所支持的分辨率*/
+        /*struct v4l2_frmsizeenum {
+            u32 index;	//要查询的帧分辨率序号
+            u32 pixel_format;	//fourcc格式
+            u32 type;		//设备支持的帧分辨率类型
+            union {	//帧分辨率
+                struct v4l2_frmsize_discrete	discrete;
+                struct v4l2_frmsize_stepwise	stepwise;
+            };
+            u32  reserved[2];	//保留
+        };*/
+        v4l2_frmsizeenum frmsize;
+        frmsize.pixel_format = fmtdesc.pixelformat;
+        frmsize.index = 0;
+        while(ioctl(cameraFd,VIDIOC_ENUM_FRAMESIZES,&frmsize) != -1)
+        {
+            printf("\tframesize type=%d\tframesize=%dx%d\n",
+                   frmsize.type,frmsize.discrete.width,
+                   frmsize.discrete.height);
+            frmsize.index++;
+        }
         fmtdesc.index++;
     }
 }
