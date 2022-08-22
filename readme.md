@@ -28,7 +28,7 @@ YUV，分为三个分量，“Y”表示明亮度，也就是灰度值；而“U
 ```
 YUV 4:4:4采样，该格式亮度和色度的采样比例相同，每一个Y对应一组UV分量，但同时传输的数据量也最大，所以在视频采集时不太常用。
 YUV 4:2:2采样，该格式亮度和色度采样比例2:1，每两个Y共用一组UV分量，常见的YUYV(YUY2)、UYVY，YUV422P(planar)都属于该格式。
-YUV 4:2:0采样，该格式亮度和色度采样比例4:1，每四个Y共用一组UV分量。
+YUV 4:2:0采样，该格式亮度和色度采样比例4:1，每四个Y共用一组UV分量，常见的NV12、NV21都属于该格式。
 ```
 注:有关更多的YUV格式及采样情况，请自行上网搜索，另外在document/v4l2.pdf(v4l2 API说明书)文档内也提供了一些常见yuv格式采样的字节顺序。
 ##### 1.2.2.YUV--RGB转换公式
@@ -49,28 +49,52 @@ R=Y+v+((103*v)>>8)
 G=Y-((88*u)>>8)-((183*v)>>8)
 B=Y+u+((197*u)>>8)
 ```
-#### 1.3.代码接口
-采集模块的代码由V4L2Capture类封装，其接口如下:
+### 1.3.代码功能及接口  
+#### 1.3.1.模块功能
+1.该模块使用V4L2的标准流程和接口采集视频帧，使用mmap内存映射的方式实现从内核空间取帧数据到用户空间。  
+2.该模块提供两种取帧方式：一种是在类外定时调用指定接口(ioctlDequeueBuffers)取帧，可以自由控制软件的取帧频次，不过有些设备驱动当取帧频次小于硬件帧率时，显示会异常;另一种是采用select机制自动取帧，该方式在处理性能跟得上的情况下，取帧速率跟帧率一致，每取完一帧数据以信号的形式对外发送。要使用该方式只需在类构造函数中传递useSelect=true参数，内部会自动创建子线程自动完成取帧处理，外部只需绑定相关信号即可。  
+3.该模块目前集成了V4L2_PIX_FMT_YUYV、V4L2_PIX_FMT_NV12、V4L2_PIX_FMT_NV21三种yuv格式到rgb的转换处理，均是使用CCIR 601的转换公式(整形移位)，为了提高处理性能，转换函数已经尽最大可能的进行了优化。  
+4.采集模块的代码由V4L2Capture类封装，VideoDisplayWidget类作为一个demo实现视频预览，为了降低视频帧刷新对cpu的占用，使用一个继承自QOpenGLWidget的PixmapWidget类显示图像，便于硬件加速。如果平台不支持opengl，则可以换用QLabel显示。
+#### 1.3.2.代码接口  
 ```
 bool openDevice(const char *filename);//打开设备
 void closeDevice();//关闭设备
-bool initDevice();//初始化设备，用于在视频帧采集前初始化
 
-//以下方法利用V4L2的数据结构结合ioctl()函数实现对视频设备的读写及控制
+//查询设备信息
 void ioctlQueryCapability();//查询设备的基本信息
 void ioctlQueryStd();//查询设备支持的标准
-void ioctlEnumFmt();//显示设备支持的帧格式
-void ioctlSetStreamParm();//设置视频流参数
-void ioctlSetStreamFmt();//设置视频流格式
+void ioctlEnumInput();//查询设备的输入
+void ioctlEnumFmt();//查询设备支持的帧格式
+//设置/查询视频流数据
+void ioctlGetStreamParm();//获取视频流参数
+void ioctlSetStreamParm(bool highQuality=false,uint timeperframe=30);//设置视频流参数
+void ioctlGetStreamFmt();//获取视频流格式
+void ioctlSetStreamFmt(uint pixelformat,uint width,uint height);//设置视频流格式
+//初始化帧缓冲区
 void ioctlRequestBuffers();//申请视频帧缓冲区(内核空间)
 void ioctlMmapBuffers();//映射视频帧缓冲区到用户空间内存
+//帧采集控制
 void ioctlQueueBuffers();//放缓冲帧进输入队列
-void ioctlDequeueBuffers(uchar *rgbFrameAddr);//从输出队列取缓冲帧
+bool ioctlDequeueBuffers(uchar *rgbFrameAddr);//从输出队列取缓冲帧
 void ioctlSetStreamSwitch(bool on);//启动/停止视频帧采集
 
 void unMmapBuffers();//释放视频缓冲区的映射内存
+//yuv--rgb转换
+inline void yuv_to_rgb_shift(int &y,int r_uv,int g_uv,int b_uv,uchar rgb[]);
+void yuyv_to_rgb_shift(uchar *yuyv,uchar *rgb,uint width,uint height);
+void nv12_to_rgb_shift(uchar *nv12,uchar *rgb,uint width,uint height);
+void nv21_to_rgb_shift(uchar *nv21,uchar *rgb,uint width,uint height);
 
-void yuyv_to_rgb_shift(uchar *yuyv,uchar *rgb,uint width,uint height);//移位法
+signals:
+    //向外发射信号(rgb原始数据流和封装的QImage，按需使用)
+    void selectCaptureFrameSig(uchar *rgbFrame);
+    void selectCaptureFrameSig(const QImage &rgbImage);
+
+    void selectCaptureSig();//外部调用，用于触发selectCaptureSlot()槽在子线程中执行
+
+public slots:
+    void selectCaptureSlot();
+    
 ```
 
 ## 参考资料
@@ -79,6 +103,7 @@ void yuyv_to_rgb_shift(uchar *yuyv,uchar *rgb,uint width,uint height);//移位�
 3. [嵌入式图像处理算法优化指南之YUV转RGB的高效实现](http://blog.sina.com.cn/s/blog_1368ebb6d0102vujd.html)  
 4. [YUV到RGB颜色空间转换算法研究](https://wenku.baidu.com/view/f57562ec04a1b0717fd5ddae.html)  
 5. [YUV图解(YUV444, YUV422, YUV420, YV12, NV12, NV21)](https://blog.csdn.net/xjhhjx/article/details/80291465)  
+6. [YUV图像格式存储方式(YUV420_NV12、YUV420_NV21、YUV422_YUYV、YUV422_YUY2)](https://blog.csdn.net/u012633319/article/details/95669597)
 
 ## 作者联系方式
 **邮箱:justdoit_mqr@163.com**  

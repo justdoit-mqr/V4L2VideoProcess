@@ -13,10 +13,12 @@ TEMPLATE = app
 
 
 SOURCES += main.cpp\
-        videodisplaywidget.cpp \
+    pixmapwidget.cpp \
+    videodisplaywidget.cpp \
     v4l2capture.cpp
 
-HEADERS  += videodisplaywidget.h \
+HEADERS  += pixmapwidget.h \
+    videodisplaywidget.h \
     v4l2capture.h
 
 FORMS    +=

@@ -1,6 +1,6 @@
 /****************************************************************************
 *
-* Copyright (C) 2019-2020 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2022 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
@@ -14,8 +14,13 @@
 
 #include <QWidget>
 #include <QLabel>
+#include <QPushButton>
 #include <QTimer>
+#include "pixmapwidget.h"
 #include "v4l2capture.h"
+
+//当平台支持opengl时，定义该宏，使用硬件加速绘图
+#define USE_OPENGL_DISPLAY
 
 class VideoDisplayWidget : public QWidget
 {
@@ -25,21 +30,46 @@ public:
     explicit VideoDisplayWidget(QWidget *parent = 0);
     ~VideoDisplayWidget();
 
+    void initTimerCapture();
+    void initSelectCapture();
+
 protected:
 
 signals:
 
 public slots:
-    void getFrameSlot();//获取采集的视频帧
+    void captureBtnClickedSlot();//采集按钮响应槽
+    void saveImageBtnClickedSlot();//保存图片按钮响应槽
+
+    //定时采集视频
+    void timerCaptureFrameSlot();
+    //select自动采集，信号传递
+    void selectCaptureFrameSlot(uchar *rgbFrame);
+    void selectCaptureFrameSlot(const QImage &rgbImage);
+
 
 private:
-    QLabel *videoOutput;//展示视频画面
+    bool initV4l2CaptureDevice();//初始化采集设备
 
-    V4L2Capture *v4l2Capture;//视频采集对象
-    uchar *rgbFrameBuf;//RGB格式图像的内存起始地址
-    int rgbFrameLen;//RGB格式图像的内存长度
-    QImage *image;//QImage图像
-    QTimer *timer;//定时获取视频帧
+#ifdef USE_OPENGL_DISPLAY
+    PixmapWidget *videoOutput;//展示视频画面
+#else
+    QLabel *videoOutput;//展示视频画面
+#endif
+
+    QPushButton *captureBtn;//控制采集开始/结束的按钮
+    QPushButton *saveImageBtn;//保存当前图片
+    QPushButton *quitBtn;//退出程序
+
+    V4L2Capture *v4l2Capture = NULL;//视频采集对象
+    bool useSelectCapture = false;//使用定时采集还是select自动采集
+    bool isSaveImage = false;//是否保存当前图片
+
+    //定时获取视频帧
+    QTimer *timer = NULL;
+    uchar *timerRgbFrameBuf = NULL;//RGB格式图像的内存起始地址
+    QImage timerImage;//RGB数据的QImage封装
+
 
 };
 
