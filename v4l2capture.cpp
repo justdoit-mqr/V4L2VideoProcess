@@ -1,6 +1,6 @@
 /****************************************************************************
 *
-* Copyright (C) 2019-2022 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2023 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
@@ -49,7 +49,7 @@ bool V4L2Capture::openDevice(const char *filename)
     cameraFd = open(filename,O_RDWR);//默认阻塞模式打开
     if(cameraFd == -1)
     {
-        printf("Cann't open video device(%s).\n",filename);
+        printf("Cann't open video device(%s).errno=%s\n",filename,strerror(errno));
         return false;
     }
     return true;
@@ -332,8 +332,9 @@ void V4L2Capture::ioctlRequestBuffers()
  *@brief:   映射视频帧缓冲区(v4l2_buffer)到用户空间内存,便于用户直接访问处理缓冲区的数据
  *@author:  缪庆瑞
  *@date:    2019.08.07
+ *@return:  bool:true=映射成功  false=映射失败
  */
-void V4L2Capture::ioctlMmapBuffers()
+bool V4L2Capture::ioctlMmapBuffers()
 {
     v4l2_buffer vbuffer;//视频缓冲帧
     for(int i = 0;i<BUFFER_COUNT;i++)
@@ -350,9 +351,10 @@ void V4L2Capture::ioctlMmapBuffers()
         if(bufferMmapPtr[i].addr == MAP_FAILED)
         {
             printf("mmap failed.\n");
-            exit(-1);
+            return false;
         }
     }
+    return true;
 }
 /*
  *@brief:   放缓冲帧进输入队列,驱动将采集到的一帧数据存入该队列的缓冲区，存完后会自动将该帧缓冲区移至采集输出队列。
@@ -724,7 +726,7 @@ void V4L2Capture::nv12_to_rgb_shift(uchar *nv12, uchar *rgb, uint width, uint he
  */
 void V4L2Capture::nv21_to_rgb_shift(uchar *nv21, uchar *rgb, uint width, uint height)
 {
-    qDebug()<<"nv21_to_rgb_shift-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
+    //qDebug()<<"nv21_to_rgb_shift-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
     uint y_len,rgb_width,cur_pixel_pos,cur_row_pixel_len;
     uint cur_pixel_rgb_pos,next_pixel_rgb_pos;
     int y_odd1,y_odd2,y_even1,y_even2,u,v;
@@ -766,5 +768,5 @@ void V4L2Capture::nv21_to_rgb_shift(uchar *nv21, uchar *rgb, uint width, uint he
         //像素位置向后跳过一行
         cur_pixel_pos += width;
     }
-    qDebug()<<"nv21_to_rgb_shift-end:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
+    //qDebug()<<"nv21_to_rgb_shift-end:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
 }

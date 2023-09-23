@@ -1,6 +1,6 @@
 /****************************************************************************
 *
-* Copyright (C) 2019-2022 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2023 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
@@ -10,10 +10,10 @@
 #include <QDebug>
 
 //采集设备对应到linux系统下的文件名
-#define VIDEO_DEVICE "/dev/video4"
+#define VIDEO_DEVICE "/dev/video5"
 //采集帧宽高
 #define FRAME_WIDTH (720)
-#define FRAME_HEIGHT (576)
+#define FRAME_HEIGHT (480)
 
 VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     QWidget(parent)
@@ -27,7 +27,7 @@ VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     videoOutput->setScaledContents(true);//按照label的大小放缩视频
 #endif
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
-    videoOutput->setFixedSize(720,576);
+    videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
 
     //采集开始/结束按钮
     captureBtn = new QPushButton(this);
@@ -228,15 +228,19 @@ bool VideoDisplayWidget::initV4l2CaptureDevice()
     v4l2Capture->ioctlQueryStd();
     v4l2Capture->ioctlEnumInput();
     v4l2Capture->ioctlEnumFmt();
-    v4l2Capture->ioctlGetStreamParm();
-    v4l2Capture->ioctlGetStreamFmt();
     /*设置采集数据的一些参数及格式(必选项)*/
     v4l2Capture->ioctlSetStreamParm(false,25);
     v4l2Capture->ioctlSetStreamFmt(V4L2_PIX_FMT_NV12,FRAME_WIDTH,FRAME_HEIGHT);
+    v4l2Capture->ioctlGetStreamParm();
+    v4l2Capture->ioctlGetStreamFmt();
+    /*设置完参数后稍作延时，这个很关键，否则可能会出现进程退出的情况*/
     usleep(100000);
     /*申请视频帧缓冲区，并进行相关处理(必选项)*/
     v4l2Capture->ioctlRequestBuffers();
-    v4l2Capture->ioctlMmapBuffers();
+    if(!v4l2Capture->ioctlMmapBuffers())
+    {
+        return false;
+    }
     qDebug()<<"initDevice-end:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
     return true;
 }

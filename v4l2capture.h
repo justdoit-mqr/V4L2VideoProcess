@@ -1,6 +1,6 @@
 /****************************************************************************
 *
-* Copyright (C) 2019-2022 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2023 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
@@ -69,7 +69,7 @@ public:
     void ioctlSetStreamFmt(uint pixelformat,uint width,uint height);//设置视频流格式
     //初始化帧缓冲区
     void ioctlRequestBuffers();//申请视频帧缓冲区(内核空间)
-    void ioctlMmapBuffers();//映射视频帧缓冲区到用户空间内存
+    bool ioctlMmapBuffers();//映射视频帧缓冲区到用户空间内存
     //帧采集控制
     void ioctlQueueBuffers();//放缓冲帧进输入队列
     bool ioctlDequeueBuffers(uchar *rgbFrameAddr);//从输出队列取缓冲帧
