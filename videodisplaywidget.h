@@ -44,8 +44,8 @@ public slots:
     //定时采集视频
     void timerCaptureFrameSlot();
     //select自动采集，信号传递
-    void selectCaptureFrameSlot(uchar *rgbFrame);
-    void selectCaptureFrameSlot(const QImage &rgbImage);
+    void captrueRgb24FrameSlot(uchar *rgb24Frame);
+    void captureRgb24ImageSlot(const QImage &rgb24Image);
 
 
 private:

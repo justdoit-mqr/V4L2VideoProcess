@@ -12,8 +12,8 @@
 //采集设备对应到linux系统下的文件名
 #define VIDEO_DEVICE "/dev/video5"
 //采集帧宽高
-#define FRAME_WIDTH (720)
-#define FRAME_HEIGHT (480)
+#define FRAME_WIDTH (1280)
+#define FRAME_HEIGHT (720)
 
 VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     QWidget(parent)
@@ -31,23 +31,26 @@ VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
 
     //采集开始/结束按钮
     captureBtn = new QPushButton(this);
+    captureBtn->setFixedHeight(80);
     captureBtn->setText("start capture");
     connect(captureBtn,SIGNAL(clicked()),this,SLOT(captureBtnClickedSlot()));
     //保存图片按钮
     saveImageBtn = new QPushButton(this);
+    saveImageBtn->setFixedHeight(80);
     saveImageBtn->setText("save image");
     connect(saveImageBtn,SIGNAL(clicked()),this,SLOT(saveImageBtnClickedSlot()));
     //退出程序按钮
     quitBtn = new QPushButton(this);
+    quitBtn->setFixedHeight(80);
     quitBtn->setText("quit");
     connect(quitBtn,&QPushButton::clicked,this,&VideoDisplayWidget::close);
 
     QGridLayout *gridLayout = new QGridLayout(this);
     gridLayout->setMargin(1);
-    gridLayout->addWidget(videoOutput,0,0,3,5);
-    gridLayout->addWidget(captureBtn,0,5,1,1);
-    gridLayout->addWidget(saveImageBtn,1,5,1,1);
-    gridLayout->addWidget(quitBtn,2,5,1,1);
+    gridLayout->addWidget(videoOutput,0,0,3,7);
+    gridLayout->addWidget(captureBtn,0,7,1,1);
+    gridLayout->addWidget(saveImageBtn,1,7,1,1);
+    gridLayout->addWidget(quitBtn,2,7,1,1);
     this->resize(1024,600);
 
     //定时采集或者select采集选一种
@@ -95,10 +98,10 @@ void VideoDisplayWidget::initSelectCapture()
     useSelectCapture = true;
 
     v4l2Capture = new V4L2Capture(useSelectCapture,0);//视频采集对象
-//    connect(v4l2Capture,SIGNAL(selectCaptureFrameSig(uchar *)),
-//            this,SLOT(selectCaptureFrameSlot(uchar*)));
-    connect(v4l2Capture,SIGNAL(selectCaptureFrameSig(const QImage&)),
-            this,SLOT(selectCaptureFrameSlot(const QImage&)));
+//    connect(v4l2Capture,SIGNAL(captureRgb24FrameSig(uchar *)),
+//            this,SLOT(captrueRgb24FrameSlot(uchar*)));
+    connect(v4l2Capture,SIGNAL(captureRgb24ImageSig(const QImage&)),
+            this,SLOT(captureRgb24ImageSlot(const QImage&)));
     initV4l2CaptureDevice();
 }
 /*
@@ -114,7 +117,7 @@ void VideoDisplayWidget::captureBtnClickedSlot()
         {
             captureBtn->setText("stop capture");
             v4l2Capture->ioctlSetStreamSwitch(true);
-            emit v4l2Capture->selectCaptureSig();
+            emit v4l2Capture->selectCaptureSig(true,false);
         }
         else
         {
@@ -171,14 +174,14 @@ void VideoDisplayWidget::timerCaptureFrameSlot()
  *@brief:  select自动采集上传的rgb帧信号
  *@author: 缪庆瑞
  *@date:   2022.08.16
- *@param:   rgbFrame:原始rgb数据
+ *@param:   rgb24Frame:原始rgb24数据
  */
-void VideoDisplayWidget::selectCaptureFrameSlot(uchar *rgbFrame)
+void VideoDisplayWidget::captrueRgb24FrameSlot(uchar *rgb24Frame)
 {
     //qDebug()<<"selectCaptureFrameSlot-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
     if(this->isVisible())
     {
-        QImage selectImage(rgbFrame,FRAME_WIDTH,FRAME_HEIGHT,QImage::Format_RGB888);
+        QImage selectImage(rgb24Frame,FRAME_WIDTH,FRAME_HEIGHT,QImage::Format_RGB888);
         videoOutput->setPixmap(QPixmap::fromImage(selectImage));//屏幕显示
         videoOutput->update();//刷新显示
         if(isSaveImage)//保存图片
@@ -192,19 +195,19 @@ void VideoDisplayWidget::selectCaptureFrameSlot(uchar *rgbFrame)
  *@brief:  select自动采集上传的QImage信号
  *@author: 缪庆瑞
  *@date:   2022.08.16
- *@param:   rgbImage:封装好的QImage
+ *@param:   rgb24Image:封装好的QImage
  */
-void VideoDisplayWidget::selectCaptureFrameSlot(const QImage &rgbImage)
+void VideoDisplayWidget::captureRgb24ImageSlot(const QImage &rgb24Image)
 {
     //qDebug()<<"selectCaptureFrameSlot-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
     if(this->isVisible())
     {
-        videoOutput->setPixmap(QPixmap::fromImage(rgbImage));//屏幕显示
+        videoOutput->setPixmap(QPixmap::fromImage(rgb24Image));//屏幕显示
         videoOutput->update();//刷新显示
         if(isSaveImage)//保存图片
         {
             isSaveImage = false;
-            rgbImage.save(QTime::currentTime().toString("HHmmsszzz")+".png",nullptr,100);
+            rgb24Image.save(QTime::currentTime().toString("HHmmsszzz")+".png",nullptr,100);
         }
     }
 }
@@ -219,7 +222,7 @@ void VideoDisplayWidget::selectCaptureFrameSlot(const QImage &rgbImage)
 bool VideoDisplayWidget::initV4l2CaptureDevice()
 {
     qDebug()<<"initDevice-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-    if(!v4l2Capture->openDevice(VIDEO_DEVICE))
+    if(!v4l2Capture->openDevice(VIDEO_DEVICE,false))
     {
         return false;
     }
@@ -227,20 +230,22 @@ bool VideoDisplayWidget::initV4l2CaptureDevice()
     v4l2Capture->ioctlQueryCapability();
     v4l2Capture->ioctlQueryStd();
     v4l2Capture->ioctlEnumInput();
+    v4l2Capture->ioctlSetInput(0);
     v4l2Capture->ioctlEnumFmt();
     /*设置采集数据的一些参数及格式(必选项)*/
-    v4l2Capture->ioctlSetStreamParm(false,25);
+    v4l2Capture->ioctlSetStreamParm(2,25);//T517驱动传递2
     v4l2Capture->ioctlSetStreamFmt(V4L2_PIX_FMT_NV12,FRAME_WIDTH,FRAME_HEIGHT);
-    v4l2Capture->ioctlGetStreamParm();
-    v4l2Capture->ioctlGetStreamFmt();
     /*设置完参数后稍作延时，这个很关键，否则可能会出现进程退出的情况*/
     usleep(100000);
-    /*申请视频帧缓冲区，并进行相关处理(必选项)*/
+    /*申请视频帧缓冲区,对帧缓冲区进行内存映射(必选项)*/
     v4l2Capture->ioctlRequestBuffers();
     if(!v4l2Capture->ioctlMmapBuffers())
     {
         return false;
     }
+    /*查询设置的参数是否生效*/
+    v4l2Capture->ioctlGetStreamParm();
+    v4l2Capture->ioctlGetStreamFmt();
     qDebug()<<"initDevice-end:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
     return true;
 }

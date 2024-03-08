@@ -1,13 +1,13 @@
 /****************************************************************************
 *
-* Copyright (C) 2019-2023 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2024 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
 /*
  *@author:  缪庆瑞
  *@date:    2019.08.07
- *@update:  2022.8.13
+ *@update:  2024.3.6
  *@brief:   该模块使用V4L2的数据结构和接口,采集视频帧,并转换为rgb格式
  *
  *1.该模块使用V4L2的标准流程和接口采集视频帧，使用mmap内存映射的方式实现从内核空间取帧数据到用户空间。
@@ -18,7 +18,7 @@
  *以信号的形式对外发送。要使用该方式只需在类构造函数中传递useSelect=true参数，内部会自动创建子线程自动
  *完成取帧处理，外部只需绑定相关信号即可。
  *3.该模块目前集成了V4L2_PIX_FMT_YUYV、V4L2_PIX_FMT_NV12、V4L2_PIX_FMT_NV21三种yuv格式到rgb的转换
- *处理，均是使用CCIR 601的转换公式(整形移位)，为了提高处理性能，转换函数已经尽最大可能的进行了优化。
+ *处理(软解码)，均是使用CCIR 601的转换公式(整形移位)，为了提高处理性能，转换函数已经尽最大可能的进行了优化。
  *
  */
 #ifndef V4L2CAPTURE_H
@@ -50,7 +50,7 @@ public:
     V4L2Capture(bool useSelect=true,QObject *parent = 0);
     ~V4L2Capture();
 
-    bool openDevice(const char *filename);//打开设备
+    bool openDevice(const char *filename,bool isNonblock);//打开设备
     void closeDevice();//关闭设备
 
     /* 以下方法利用V4L2的数据结构结合ioctl()函数实现对视频设备的读写及控制
@@ -60,34 +60,36 @@ public:
     //查询设备信息
     void ioctlQueryCapability();//查询设备的基本信息
     void ioctlQueryStd();//查询设备支持的标准
-    void ioctlEnumInput();//查询设备的输入
+    void ioctlEnumInput();//查询设备支持的输入
     void ioctlEnumFmt();//查询设备支持的帧格式
     //设置/查询视频流数据
+    void ioctlSetInput(int inputIndex);//设置当前设备输入
     void ioctlGetStreamParm();//获取视频流参数
-    void ioctlSetStreamParm(bool highQuality=false,uint timeperframe=30);//设置视频流参数
+    void ioctlSetStreamParm(uint captureMode,uint timeperframe=30);//设置视频流参数
     void ioctlGetStreamFmt();//获取视频流格式
     void ioctlSetStreamFmt(uint pixelformat,uint width,uint height);//设置视频流格式
     //初始化帧缓冲区
     void ioctlRequestBuffers();//申请视频帧缓冲区(内核空间)
     bool ioctlMmapBuffers();//映射视频帧缓冲区到用户空间内存
     //帧采集控制
-    void ioctlQueueBuffers();//放缓冲帧进输入队列
-    bool ioctlDequeueBuffers(uchar *rgbFrameAddr);//从输出队列取缓冲帧
     void ioctlSetStreamSwitch(bool on);//启动/停止视频帧采集
-
-    void unMmapBuffers();//释放视频缓冲区的映射内存
+    bool ioctlDequeueBuffers(uchar *rgb24FrameAddr,uchar *originFrameAddr[]=NULL);//从输出队列取缓冲帧
 
 signals:
-    //向外发射信号(rgb原始数据流和封装的QImage，按需使用)
-    void selectCaptureFrameSig(uchar *rgbFrame);
-    void selectCaptureFrameSig(const QImage &rgbImage);
+    //向外发射采集到的帧数据信号
+    void captureOriginFrameSig(uchar *originFrame[]);//原始数据帧(pixelFormat,长度针对多平面类型的数量，单平面为1)
+    void captureRgb24FrameSig(uchar *rgb24Frame);//转换后的rgb24数据帧
+    void captureRgb24ImageSig(const QImage &rgb24Image);//封装成QImage(RGB888)数据
 
-    void selectCaptureSig();//外部调用，用于触发selectCaptureSlot()槽在子线程中执行
+    //外部调用，用于触发selectCaptureSlot()槽在子线程中执行
+    void selectCaptureSig(bool needRgb24Frame,bool needOriginFrame);
 
 public slots:
-    void selectCaptureSlot();
+    void selectCaptureSlot(bool needRgb24Frame,bool needOriginFrame);
 
 private:
+    void ioctlQueueBuffers();//放缓冲帧进输入队列，在开始采集时会调用一次
+    void unMmapBuffers();//释放视频缓冲区的映射内存
     void clearSelectResource();//清理select相关的资源
 
     /* YUV<---->RGB格式转换常用公式(CCIR 601)如下：
@@ -102,29 +104,38 @@ private:
      * V(Cr)=0.500R−0.419G−0.081B+128
      */
     inline void yuv_to_rgb_shift(int &y,int r_uv,int g_uv,int b_uv,uchar rgb[]);
-    void yuyv_to_rgb_shift(uchar *yuyv,uchar *rgb,uint width,uint height);
-    void nv12_to_rgb_shift(uchar *nv12,uchar *rgb,uint width,uint height);
-    void nv21_to_rgb_shift(uchar *nv21,uchar *rgb,uint width,uint height);
+    void yuyv_to_rgb_shift(uchar *yuyv,uchar *rgb24,const uint &width,const uint &height);
+    void nv12_to_rgb_shift(uchar *nv12,uchar *rgb24,const uint &width,const uint &height);
+    void nv21_to_rgb_shift(uchar *nv21,uchar *rgb24,const uint &width,const uint &height);
+    void rgb4_to_rgb_shift(uchar *rgb32,uchar *rgb24,const uint &width,const uint &height);
 
 
+    /*采集设备参数*/
     int cameraFd = -1;//设备文件句柄
+    int v4l2BufType = V4L2_BUF_TYPE_VIDEO_CAPTURE;//采集帧类型(目前主要分单plane和多plane，根据查询的v4l2_capability自动设置)
+    int planes_num = 1;//平面数，针对多平面采集帧格式(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
     volatile bool isStreamOn = false;//设备采集状态(启/停)
     uint pixelFormat = 0;//采集帧格式
     uint pixelWidth = 720;//像素宽度
     uint pixelHeight = 576;//像素高度
 
-    //select采集
+    /*select采集*/
     bool useSelectCapture = false;//是否使用select采集
     QThread *selectThread = NULL;//专用线程
     uchar *selectRgbFrameBuf = NULL;//双缓冲帧
     uchar *selectRgbFrameBuf2 = NULL;
 
-    /*该结构体数组存放每一个被映射的缓冲帧的信息*/
-    struct BufferMmap
+    /*缓存帧内存映射信息*/
+    struct BufferMmap//单平面
 	{
         uchar * addr = NULL;//缓冲帧映射到内存中的起始地址
         uint length = 0;//缓冲帧映射到内存中的长度
     }bufferMmapPtr[BUFFER_COUNT];
+    struct BufferMmapMplane//多平面
+    {
+        uchar * addr[VIDEO_MAX_PLANES] = {NULL};//缓冲帧(每个平面)映射到内存中的起始地址
+        uint length[VIDEO_MAX_PLANES] = {0};//缓冲帧(每个平面)映射到内存中的长度
+    }bufferMmapMplanePtr[BUFFER_COUNT];
 
 };
 #endif //V4L2CAPTURE_H
