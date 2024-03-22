@@ -221,6 +221,8 @@ void VideoDisplayWidget::captureRgb24ImageSlot(const QImage &rgb24Image)
  */
 bool VideoDisplayWidget::initV4l2CaptureDevice()
 {
+    V4L2Capture::initRgbYuvTable();
+
     qDebug()<<"initDevice-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
     if(!v4l2Capture->openDevice(VIDEO_DEVICE,false))
     {

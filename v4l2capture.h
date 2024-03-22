@@ -8,7 +8,7 @@
  *@author:  缪庆瑞
  *@date:    2019.08.07
  *@update:  2024.3.6
- *@brief:   该模块使用V4L2的数据结构和接口,采集视频帧,并转换为rgb格式
+ *@brief:   该模块使用V4L2的数据结构和接口,采集视频帧,并根据需求选择是否进行软解码转换
  *
  *1.该模块使用V4L2的标准流程和接口采集视频帧，使用mmap内存映射的方式实现从内核空间取帧数据到用户空间。
  *2.该模块提供两种取帧方式：
@@ -17,9 +17,6 @@
  *  2.2另一种是采用select机制自动取帧，该方式在处理性能跟得上的情况下，取帧速率跟帧率一致，每取完一帧数据
  *以信号的形式对外发送。要使用该方式只需在类构造函数中传递useSelect=true参数，内部会自动创建子线程自动
  *完成取帧处理，外部只需绑定相关信号即可。
- *3.该模块目前集成了V4L2_PIX_FMT_YUYV、V4L2_PIX_FMT_NV12、V4L2_PIX_FMT_NV21三种yuv格式到rgb的转换
- *处理(软解码)，均是使用CCIR 601的转换公式(整形移位)，为了提高处理性能，转换函数已经尽最大可能的进行了优化。
- *
  */
 #ifndef V4L2CAPTURE_H
 #define V4L2CAPTURE_H
@@ -52,6 +49,7 @@ public:
 
     bool openDevice(const char *filename,bool isNonblock);//打开设备
     void closeDevice();//关闭设备
+    static void initRgbYuvTable();//初始化yuv转rgb查表法的多维数组(表)
 
     /* 以下方法利用V4L2的数据结构结合ioctl()函数实现对视频设备的读写及控制
      * ioctl(int fd,unsigned long cmd,...)函数用于对设备的读取与控制(第三个参数一般涉及数据
@@ -91,24 +89,6 @@ private:
     void ioctlQueueBuffers();//放缓冲帧进输入队列，在开始采集时会调用一次
     void unMmapBuffers();//释放视频缓冲区的映射内存
     void clearSelectResource();//清理select相关的资源
-
-    /* YUV<---->RGB格式转换常用公式(CCIR 601)如下：
-     * 浮点计算(效率低)                                  整形移位:(效率较高)
-     *                                                 v=V-128; u=U-128;
-     * R=Y+1.403*(V−128)                               R=Y+v+((103*v)>>8)
-     * G=Y–0.343*(U–128)–0.714*(V–128)                 G=Y-((88*u)>>8)-((183*v)>>8)
-     * B=Y+1.770*(U–128)                               B=Y+u+((197*u)>>8)
-     *
-     * Y=0.299R+0.587G+0.114B
-     * U(Cb)=−0.169R−0.331G+0.500B+128
-     * V(Cr)=0.500R−0.419G−0.081B+128
-     */
-    inline void yuv_to_rgb_shift(int &y,int r_uv,int g_uv,int b_uv,uchar rgb[]);
-    void yuyv_to_rgb_shift(uchar *yuyv,uchar *rgb24,const uint &width,const uint &height);
-    void nv12_to_rgb_shift(uchar *nv12,uchar *rgb24,const uint &width,const uint &height);
-    void nv21_to_rgb_shift(uchar *nv21,uchar *rgb24,const uint &width,const uint &height);
-    void rgb4_to_rgb_shift(uchar *rgb32,uchar *rgb24,const uint &width,const uint &height);
-
 
     /*采集设备参数*/
     int cameraFd = -1;//设备文件句柄

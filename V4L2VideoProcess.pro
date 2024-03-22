@@ -23,9 +23,11 @@ RCC_DIR = ./build
 #CONFIG += staticlib
 #QMAKE_POST_LINK += cp v4l2capture.h ./libs/
 
-SOURCES += v4l2capture.cpp
+SOURCES += v4l2capture.cpp \
+    colortorgb24.cpp
 
-HEADERS  += v4l2capture.h
+HEADERS  += v4l2capture.h \
+    colortorgb24.h
 
 if(contains(TEMPLATE,app)){
 SOURCES += \

@@ -4,7 +4,14 @@
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
+/*
+ *@author:  缪庆瑞
+ *@date:    2019.08.07
+ *@update:  2024.3.6
+ *@brief:   该模块使用V4L2的数据结构和接口,采集视频帧,并根据需求选择软解码
+ */
 #include "v4l2capture.h"
+#include "colortorgb24.h"
 #include <QTime>
 #include <QDebug>
 
@@ -70,6 +77,17 @@ void V4L2Capture::closeDevice()
         }
         cameraFd = -1;
     }
+}
+/*
+ *@brief:  初始化yuv转rgb查表法的多维数组
+ *静态方法，如需使用全局只调用一次即可
+ *@date:   2024.03.22
+ */
+void V4L2Capture::initRgbYuvTable()
+{
+#ifdef USE_RGB_YUV_TABLE
+    ColorToRgb24::initRgbTableFromYuv();
+#endif
 }
 /*
  *@brief:   查询设备的基本信息及驱动能力(v4l2_capability)
@@ -560,33 +578,33 @@ bool V4L2Capture::ioctlDequeueBuffers(uchar *rgb24FrameAddr, uchar *originFrameA
         }
         if(rgb24FrameAddr)
         {
-            yuyv_to_rgb_shift(yuyvFrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
+#ifdef USE_RGB_YUV_TABLE
+            ColorToRgb24::yuyv_to_rgb24_table(yuyvFrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
+#else
+            ColorToRgb24::yuyv_to_rgb24_shift(yuyvFrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
+#endif
         }
     }
-    else if(pixelFormat == V4L2_PIX_FMT_NV12)
+    else if(pixelFormat == V4L2_PIX_FMT_NV12 || pixelFormat == V4L2_PIX_FMT_NV21)
     {
-        uchar *nv12FrameAddr = (v4l2BufType == V4L2_BUF_TYPE_VIDEO_CAPTURE)?
+        uchar *nv12_21FrameAddr = (v4l2BufType == V4L2_BUF_TYPE_VIDEO_CAPTURE)?
                     bufferMmapPtr[vbuffer.index].addr:bufferMmapMplanePtr[vbuffer.index].addr[0];
         if(originFrameAddr)
         {
-           originFrameAddr[0] = nv12FrameAddr;
+           originFrameAddr[0] = nv12_21FrameAddr;
         }
         if(rgb24FrameAddr)
         {
-            nv12_to_rgb_shift(nv12FrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
-        }
-    }
-    else if(pixelFormat == V4L2_PIX_FMT_NV21)
-    {
-        uchar *nv21FrameAddr = (v4l2BufType == V4L2_BUF_TYPE_VIDEO_CAPTURE)?
-                    bufferMmapPtr[vbuffer.index].addr:bufferMmapMplanePtr[vbuffer.index].addr[0];
-        if(originFrameAddr)
-        {
-            originFrameAddr[0] = nv21FrameAddr;
-        }
-        if(rgb24FrameAddr)
-        {
-            nv21_to_rgb_shift(nv21FrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
+#ifdef USE_RGB_YUV_TABLE
+            ColorToRgb24::nv12_21_to_rgb24_table((pixelFormat == V4L2_PIX_FMT_NV12),
+                                                 nv12_21FrameAddr,rgb24FrameAddr,
+                                                 pixelWidth,pixelHeight);
+#else
+            ColorToRgb24::nv12_21_to_rgb24_shift((pixelFormat == V4L2_PIX_FMT_NV12),
+                                                 nv12_21FrameAddr,rgb24FrameAddr,
+                                                 pixelWidth,pixelHeight);
+#endif
+
         }
     }
     else if(pixelFormat == V4L2_PIX_FMT_RGB32)
@@ -599,7 +617,7 @@ bool V4L2Capture::ioctlDequeueBuffers(uchar *rgb24FrameAddr, uchar *originFrameA
         }
         if(rgb24FrameAddr)
         {
-            rgb4_to_rgb_shift(rgb32FrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
+            ColorToRgb24::rgb4_to_rgb24(rgb32FrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
         }
     }
 
@@ -785,228 +803,5 @@ void V4L2Capture::clearSelectResource()
     if(selectRgbFrameBuf2)
     {
         free(selectRgbFrameBuf2);
-    }
-}
-/*
- *@brief:   采用整形移位方式转换YUV--RGB，由于YUV大多格式都是多个Y分量共用一组uv，所以为了减少重复计算，
- *关于uv分量的整形移位处理不纳入到该函数中,该函数主要用来关联Y分量，并对rbg值做范围校验。
- *注:该函数需要对每一个像素点进行处理计算，调用频次比较高，故设置成内联函数降低函数调用的损失，但相较与直接
- *编码性能还是会低一些(在1.2GHz的arm上实测，720×576分辨率每一帧处理会多用1-2ms(Debug模式编译的程序时间
- *差距会更大))，如果对效率要求较高建议采取硬编码。
- *@date:    2022.8.18
- *@param:   y:Y分量值
- *@param:   r_uv:根据移位法求得的未关联Y的R值
- *@param:   g_uv:根据移位法求得的未关联Y的G值
- *@param:   b_uv:根据移位法求得的未关联Y的B值
- *@param:   rgb:存放一个rgb像素(3字节)的首地址
- */
-void V4L2Capture::yuv_to_rgb_shift(int &y, int r_uv, int g_uv, int b_uv, uchar rgb[])
-{
-    /*移位法  计算RGB公式内不包含Y的部分，结果可以供多个rgb像素使用
-    r_uv = v+((103*v)>>8);
-    g_uv = ((88*u)>>8)+((183*v)>>8);
-    b_uv = u+((197*u)>>8);*/
-
-    //关联Y分量，计算出rgb值
-    r_uv = y + r_uv;
-    g_uv = y - g_uv;
-    b_uv = y + b_uv;
-    //校验范围
-    rgb[0] = (r_uv > 255)?255:(r_uv < 0)?0:r_uv;
-    rgb[1] = (g_uv > 255)?255:(g_uv < 0)?0:g_uv;
-    rgb[2] = (b_uv > 255)?255:(b_uv < 0)?0:b_uv;
-}
-/*
- *@brief:   将yuyv帧格式数据转换成rgb24格式数据，这里采用的是基于整形移位的yuv--rgb转换公式
- *注:YUYV是YUV422采样方式(数据存储分为packed(打包)和planar(平面))中的一种，基于packed方式的转换。
- *@date:    2019.8.7
- *@param:   yuyv:yuyv帧格式数据地址，该地址通常是对设备的内存映射空间
- *@param:   rgb24:rgb888帧格式数据地址，该地址内存空间必须在方法外申请
- *@param:   width:宽度  height:高度
- */
-void V4L2Capture::yuyv_to_rgb_shift(uchar *yuyv, uchar *rgb24, const uint &width, const uint &height)
-{
-    //qDebug()<<"yuyv_to_rgb_shift-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-    int yvyuLen = width*height*2;//yuyv用四字节表示两个像素
-    int y0,u,y1,v;
-    int r_uv,g_uv,b_uv;
-    int r,g,b;
-    int rgbIndex = 0;
-    /*每次循环转换出两个rgb像素*/
-    for(int i = 0;i<yvyuLen;i += 4)
-    {
-        //按顺序提取yuyv数据
-        y0 = yuyv[i+0];
-        u  = yuyv[i+1] - 128;
-        y1 = yuyv[i+2];
-        v  = yuyv[i+3] - 128;
-        //移位法  计算RGB公式内不包含Y的部分，结果可以供两个rgb像素使用
-        r_uv = v+((103*v)>>8);
-        g_uv = ((88*u)>>8)+((183*v)>>8);
-        b_uv = u+((197*u)>>8);
-        //像素1的rgb数据
-        r = y0 + r_uv;
-        g = y0 - g_uv;
-        b = y0 + b_uv;
-        rgb24[rgbIndex++] = (r > 255)?255:(r < 0)?0:r;
-        rgb24[rgbIndex++] = (g > 255)?255:(g < 0)?0:g;
-        rgb24[rgbIndex++] = (b > 255)?255:(b < 0)?0:b;
-        //像素2的rgb数据
-        r = y1 + r_uv;
-        g = y1 - g_uv;
-        b = y1 + b_uv;
-        rgb24[rgbIndex++] = (r > 255)?255:(r < 0)?0:r;
-        rgb24[rgbIndex++] = (g > 255)?255:(g < 0)?0:g;
-        rgb24[rgbIndex++] = (b > 255)?255:(b < 0)?0:b;
-    }
-    //qDebug()<<"yuyv_to_rgb_shift-end:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-}
-/*
- *@brief:   将NV12帧格式数据转换成rgb24格式数据，这里采用的是基于整形移位的yuv--rgb转换公式
- *注：NV12是YUV420SP格式的一种，two-plane模式(连续缓存)，即Y和UV分为两个plane，Y按照和planar存储，
- *UV(CbCr)则为packed交错存储。
- *@date:    2022.8.13
- *@param:   nv12:NV12(YUV420SP的一种)帧格式数据地址，该地址通常是对设备的内存映射空间
- *@param:   rgb24:rgb888帧格式数据地址，该地址内存空间必须在方法外申请
- *@param:   width:宽度  height:高度
- */
-void V4L2Capture::nv12_to_rgb_shift(uchar *nv12, uchar *rgb24, const uint &width, const uint &height)
-{
-    //qDebug()<<"nv12_to_rgb_shift-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-    uint y_len,rgb_width,cur_pixel_pos,cur_row_pixel_len;
-    uint cur_pixel_rgb_pos,next_pixel_rgb_pos;
-    int y_odd1,y_odd2,y_even1,y_even2,u,v;
-    int r_uv,g_uv,b_uv;
-    int r,g,b;
-    y_len = width*height;//Y分量的字节长度
-    rgb_width = width*3;//一行rgb像素的字节长度
-    cur_pixel_pos = 0;//当前处理的像素位置
-    for(uint i=0;i<height;i+=2)//一次处理两行
-    {
-        cur_row_pixel_len = cur_pixel_pos;//当前行首的像素距离首个像素的长度
-        for(uint j=0;j<width;j+=2)//一次处理两列
-        {
-            //当前的rgb像素位置 = 当前处理像素位置*3
-            cur_pixel_rgb_pos = cur_pixel_pos*3;
-            next_pixel_rgb_pos = cur_pixel_rgb_pos + rgb_width;
-            //uv分量
-            u = nv12[y_len-(cur_row_pixel_len>>1)+cur_pixel_pos] - 128;
-            v = nv12[y_len-(cur_row_pixel_len>>1)+cur_pixel_pos+1] - 128;
-            //移位法  计算RGB公式内不包含Y的部分，结果可以供4个rgb像素使用
-            r_uv = v+((103*v)>>8);
-            g_uv = ((88*u)>>8)+((183*v)>>8);
-            b_uv = u+((197*u)>>8);
-            //四个Y分量，共用一组uv
-            y_odd1 = nv12[cur_pixel_pos];
-            y_odd2 = nv12[cur_pixel_pos+1];
-            y_even1 = nv12[cur_pixel_pos+width];
-            y_even2 = nv12[cur_pixel_pos+1+width];
-            /*关联Y分量，计算出rgb值*/
-            //奇数行
-            r = y_odd1 + r_uv;
-            g = y_odd1 - g_uv;
-            b = y_odd1 + b_uv;
-            rgb24[cur_pixel_rgb_pos] = (r > 255)?255:(r < 0)?0:r;
-            rgb24[cur_pixel_rgb_pos+1] = (g > 255)?255:(g < 0)?0:g;
-            rgb24[cur_pixel_rgb_pos+2] = (b > 255)?255:(b < 0)?0:b;
-            r = y_odd2 + r_uv;
-            g = y_odd2 - g_uv;
-            b = y_odd2 + b_uv;
-            rgb24[cur_pixel_rgb_pos+3] = (r > 255)?255:(r < 0)?0:r;
-            rgb24[cur_pixel_rgb_pos+4] = (g > 255)?255:(g < 0)?0:g;
-            rgb24[cur_pixel_rgb_pos+5] = (b > 255)?255:(b < 0)?0:b;
-            //偶数行
-            r = y_even1 + r_uv;
-            g = y_even1 - g_uv;
-            b = y_even1 + b_uv;
-            rgb24[next_pixel_rgb_pos] = (r > 255)?255:(r < 0)?0:r;
-            rgb24[next_pixel_rgb_pos+1] = (g > 255)?255:(g < 0)?0:g;
-            rgb24[next_pixel_rgb_pos+2] = (b > 255)?255:(b < 0)?0:b;
-            r = y_even2 + r_uv;
-            g = y_even2 - g_uv;
-            b = y_even2 + b_uv;
-            rgb24[next_pixel_rgb_pos+3] = (r > 255)?255:(r < 0)?0:r;
-            rgb24[next_pixel_rgb_pos+4] = (g > 255)?255:(g < 0)?0:g;
-            rgb24[next_pixel_rgb_pos+5] = (b > 255)?255:(b < 0)?0:b;
-
-            //像素位置向后移动两列
-            cur_pixel_pos += 2;
-        }
-        //像素位置向后跳过一行
-        cur_pixel_pos += width;
-    }
-    //qDebug()<<"nv12_to_rgb_shift-end:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-}
-/*
- *@brief:   将NV21帧格式数据转换成rgb24格式数据，这里采用的是基于整形移位的yuv--rgb转换公式
- *注：NV21是YUV420SP格式的一种，two-plane模式(连续缓存)，即Y和VU分为两个plane，Y按照和planar存储，
- *VU(CrCb)则为packed交错存储。
- *@date:    2022.8.15
- *@param:   nv21:NV21(YUV420SP的一种)帧格式数据地址，该地址通常是对设备的内存映射空间
- *@param:   rgb24:rgb888帧格式数据地址，该地址内存空间必须在方法外申请
- *@param:   width:宽度  height:高度
- */
-void V4L2Capture::nv21_to_rgb_shift(uchar *nv21, uchar *rgb24, const uint &width, const uint &height)
-{
-    //qDebug()<<"nv21_to_rgb_shift-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-    uint y_len,rgb_width,cur_pixel_pos,cur_row_pixel_len;
-    uint cur_pixel_rgb_pos,next_pixel_rgb_pos;
-    int y_odd1,y_odd2,y_even1,y_even2,u,v;
-    int r_uv,g_uv,b_uv;
-    y_len = width*height;//Y分量的字节长度
-    rgb_width = width*3;//一行rgb像素的字节长度
-    cur_pixel_pos = 0;//当前处理的像素位置
-    for(uint i=0;i<height;i+=2)//一次处理两行
-    {
-        cur_row_pixel_len = cur_pixel_pos;//当前行首的像素距离首个像素的长度
-        for(uint j=0;j<width;j+=2)//一次处理两列
-        {
-            //当前的rgb像素位置 = 当前处理像素位置*3
-            cur_pixel_rgb_pos = cur_pixel_pos*3;
-            next_pixel_rgb_pos = cur_pixel_rgb_pos + rgb_width;
-            //uv分量
-            v = nv21[y_len-(cur_row_pixel_len>>1)+cur_pixel_pos] - 128;
-            u = nv21[y_len-(cur_row_pixel_len>>1)+cur_pixel_pos+1] - 128;
-            //移位法  计算RGB公式内不包含Y的部分，结果可以供4个rgb像素使用
-            r_uv = v+((103*v)>>8);
-            g_uv = ((88*u)>>8)+((183*v)>>8);
-            b_uv = u+((197*u)>>8);
-            //四个Y分量，共用一组uv
-            y_odd1 = nv21[cur_pixel_pos];
-            y_odd2 = nv21[cur_pixel_pos+1];
-            y_even1 = nv21[cur_pixel_pos+width];
-            y_even2 = nv21[cur_pixel_pos+1+width];
-            /*关联Y分量，计算出rgb值*/
-            //奇数行
-            yuv_to_rgb_shift(y_odd1,r_uv,g_uv,b_uv,rgb24+cur_pixel_rgb_pos);
-            yuv_to_rgb_shift(y_odd2,r_uv,g_uv,b_uv,rgb24+cur_pixel_rgb_pos+3);
-            //偶数行
-            yuv_to_rgb_shift(y_even1,r_uv,g_uv,b_uv,rgb24+next_pixel_rgb_pos);
-            yuv_to_rgb_shift(y_even2,r_uv,g_uv,b_uv,rgb24+next_pixel_rgb_pos+3);
-
-            //像素位置向后移动两列
-            cur_pixel_pos += 2;
-        }
-        //像素位置向后跳过一行
-        cur_pixel_pos += width;
-    }
-    //qDebug()<<"nv21_to_rgb_shift-end:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-}
-/*
- *@brief:   将rgb32(rgb8888,对应fourcc为rgb4)帧格式数据转换成rgb24格式数据
- *@date:    2024.03.07
- *@param:   rgb32:rgb8888格式帧数据地址，该地址通常是对设备的内存映射空间
- *@param:   rgb24:rgb888帧格式数据地址，该地址内存空间必须在方法外申请
- *@param:   width:宽度  height:高度
- */
-void V4L2Capture::rgb4_to_rgb_shift(uchar *rgb32, uchar *rgb24, const uint &width, const uint &height)
-{
-    int rgb32_len = width*height*4;
-    int rgb24_index = 0;
-    for(int i=0;i<rgb32_len;i+=4)
-    {
-        rgb24[rgb24_index] = rgb32[i+1];
-        rgb24[++rgb24_index] = rgb32[i+2];
-        rgb24[++rgb24_index] = rgb32[i+3];
     }
 }
