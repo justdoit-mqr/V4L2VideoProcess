@@ -79,17 +79,6 @@ void V4L2Capture::closeDevice()
     }
 }
 /*
- *@brief:  初始化yuv转rgb查表法的多维数组
- *静态方法，如需使用全局只调用一次即可
- *@date:   2024.03.22
- */
-void V4L2Capture::initRgbYuvTable()
-{
-#ifdef USE_RGB_YUV_TABLE
-    ColorToRgb24::initRgbTableFromYuv();
-#endif
-}
-/*
  *@brief:   查询设备的基本信息及驱动能力(v4l2_capability)
  * 通常对于一个摄像设备，它的驱动能力一般仅支持视频采集(V4L2_CAP_VIDEO_CAPTURE(单平面)或V4L2_CAP_VIDEO_CAPTURE_MPLANE(多平面))
  * 和ioctl控制(V4L2_CAP_STREAMING)，有些还支持通过系统调用进行读写(V4L2_CAP_READWRITE）
@@ -578,11 +567,7 @@ bool V4L2Capture::ioctlDequeueBuffers(uchar *rgb24FrameAddr, uchar *originFrameA
         }
         if(rgb24FrameAddr)
         {
-#ifdef USE_RGB_YUV_TABLE
-            ColorToRgb24::yuyv_to_rgb24_table(yuyvFrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
-#else
             ColorToRgb24::yuyv_to_rgb24_shift(yuyvFrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
-#endif
         }
     }
     else if(pixelFormat == V4L2_PIX_FMT_NV12 || pixelFormat == V4L2_PIX_FMT_NV21)
@@ -595,16 +580,9 @@ bool V4L2Capture::ioctlDequeueBuffers(uchar *rgb24FrameAddr, uchar *originFrameA
         }
         if(rgb24FrameAddr)
         {
-#ifdef USE_RGB_YUV_TABLE
-            ColorToRgb24::nv12_21_to_rgb24_table((pixelFormat == V4L2_PIX_FMT_NV12),
-                                                 nv12_21FrameAddr,rgb24FrameAddr,
-                                                 pixelWidth,pixelHeight);
-#else
             ColorToRgb24::nv12_21_to_rgb24_shift((pixelFormat == V4L2_PIX_FMT_NV12),
                                                  nv12_21FrameAddr,rgb24FrameAddr,
                                                  pixelWidth,pixelHeight);
-#endif
-
         }
     }
     else if(pixelFormat == V4L2_PIX_FMT_RGB32)

@@ -49,7 +49,6 @@ public:
 
     bool openDevice(const char *filename,bool isNonblock);//打开设备
     void closeDevice();//关闭设备
-    static void initRgbYuvTable();//初始化yuv转rgb查表法的多维数组(表)
 
     /* 以下方法利用V4L2的数据结构结合ioctl()函数实现对视频设备的读写及控制
      * ioctl(int fd,unsigned long cmd,...)函数用于对设备的读取与控制(第三个参数一般涉及数据

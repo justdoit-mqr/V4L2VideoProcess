@@ -12,8 +12,8 @@
 //采集设备对应到linux系统下的文件名
 #define VIDEO_DEVICE "/dev/video5"
 //采集帧宽高
-#define FRAME_WIDTH (1280)
-#define FRAME_HEIGHT (720)
+#define FRAME_WIDTH (720)
+#define FRAME_HEIGHT (576)
 
 VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     QWidget(parent)
@@ -27,7 +27,7 @@ VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     videoOutput->setScaledContents(true);//按照label的大小放缩视频
 #endif
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
-    videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
+    //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
 
     //采集开始/结束按钮
     captureBtn = new QPushButton(this);
@@ -221,8 +221,6 @@ void VideoDisplayWidget::captureRgb24ImageSlot(const QImage &rgb24Image)
  */
 bool VideoDisplayWidget::initV4l2CaptureDevice()
 {
-    V4L2Capture::initRgbYuvTable();
-
     qDebug()<<"initDevice-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
     if(!v4l2Capture->openDevice(VIDEO_DEVICE,false))
     {
