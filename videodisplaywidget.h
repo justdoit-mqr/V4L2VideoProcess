@@ -1,6 +1,6 @@
 /****************************************************************************
 *
-* Copyright (C) 2019-2023 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2024 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
@@ -17,10 +17,13 @@
 #include <QPushButton>
 #include <QTimer>
 #include "pixmapwidget.h"
+#include "yuvrenderingwidget.h"
 #include "v4l2capture.h"
 
-//当平台支持opengl时，定义该宏，使用硬件加速绘图
-#define USE_OPENGL_DISPLAY
+//是否使用yuv渲染器部件，不定义默认用软解码，通过pixmapWidget渲染
+#define USE_YUV_RENDERING_WIDGET
+//是否使用select自动采集，不定义默认使用定时采集
+#define USE_SELECT_CAPTURE
 
 class VideoDisplayWidget : public QWidget
 {
@@ -30,31 +33,15 @@ public:
     explicit VideoDisplayWidget(QWidget *parent = 0);
     ~VideoDisplayWidget();
 
+private:
     void initTimerCapture();
     void initSelectCapture();
-
-protected:
-
-signals:
-
-public slots:
-    void captureBtnClickedSlot();//采集按钮响应槽
-    void saveImageBtnClickedSlot();//保存图片按钮响应槽
-
-    //定时采集视频
-    void timerCaptureFrameSlot();
-    //select自动采集，信号传递
-    void captrueRgb24FrameSlot(uchar *rgb24Frame);
-    void captureRgb24ImageSlot(const QImage &rgb24Image);
-
-
-private:
     bool initV4l2CaptureDevice();//初始化采集设备
 
-#ifdef USE_OPENGL_DISPLAY
-    PixmapWidget *videoOutput;//展示视频画面
+#ifdef USE_YUV_RENDERING_WIDGET
+    YuvRenderingWidget *videoOutput;//展示视频画面
 #else
-    QLabel *videoOutput;//展示视频画面
+    PixmapWidget *videoOutput;//展示视频画面
 #endif
 
     QPushButton *captureBtn;//控制采集开始/结束的按钮
@@ -62,14 +49,21 @@ private:
     QPushButton *quitBtn;//退出程序
 
     V4L2Capture *v4l2Capture = NULL;//视频采集对象
-    bool useSelectCapture = false;//使用定时采集还是select自动采集
     bool isSaveImage = false;//是否保存当前图片
 
+#ifdef USE_SELECT_CAPTURE
+#else
     //定时获取视频帧
     QTimer *timer = NULL;
     uchar *timerRgbFrameBuf = NULL;//RGB格式图像的内存起始地址
     QImage timerImage;//RGB数据的QImage封装
+#endif
 
+signals:
+
+public slots:
+    void captureBtnClickedSlot();//采集按钮响应槽
+    void saveImageBtnClickedSlot();//保存图片按钮响应槽
 
 };
 

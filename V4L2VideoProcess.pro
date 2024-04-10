@@ -22,12 +22,15 @@ RCC_DIR = ./build
 #DESTDIR = ./libs
 #CONFIG += staticlib
 #QMAKE_POST_LINK += cp v4l2capture.h ./libs/
+#QMAKE_POST_LINK += cp yuvrenderingwidget.h ./libs/
 
 SOURCES += v4l2capture.cpp \
-    colortorgb24.cpp
+    colortorgb24.cpp \
+    yuvrenderingwidget.cpp
 
 HEADERS  += v4l2capture.h \
-    colortorgb24.h
+    colortorgb24.h \
+    yuvrenderingwidget.h
 
 if(contains(TEMPLATE,app)){
 SOURCES += \

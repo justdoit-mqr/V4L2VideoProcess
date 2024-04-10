@@ -1,6 +1,6 @@
 /****************************************************************************
 *
-* Copyright (C) 2019-2023 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2024 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
@@ -21,10 +21,19 @@
 #ifndef PIXMAPWIDGET_H
 #define PIXMAPWIDGET_H
 
+//是否使用QOpenGLWidget绘制pixmap
+#define USE_OPENGL_WIDGET
+
+#ifdef USE_OPENGL_WIDGET
 #include <QOpenGLWidget>
+#define PARENT_WIDGET QOpenGLWidget
+#else
+#include <QWidget>
+#define PARENT_WIDGET QWidget
+#endif
 #include <QPixmap>
 
-class PixmapWidget : public QOpenGLWidget
+class PixmapWidget : public PARENT_WIDGET
 {
     Q_OBJECT
 public:

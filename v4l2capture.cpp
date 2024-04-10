@@ -683,9 +683,6 @@ void V4L2Capture::selectCaptureSlot(bool needRgb24Frame, bool needOriginFrame)
         selectRgbFrameBuf2 = (uchar *)malloc(pixelWidth*pixelHeight*3);
     }
     uchar *curRgbFrameBuf = selectRgbFrameBuf;
-    QImage selectRgbFrameImage(selectRgbFrameBuf,pixelWidth,pixelHeight,QImage::Format_RGB888);
-    QImage selectRgbFrameImage2(selectRgbFrameBuf2,pixelWidth,pixelHeight,QImage::Format_RGB888);
-    QImage curFrameImage = selectRgbFrameImage;
 
     //存放原生帧的地址
     uchar *originFrameAddrVec[VIDEO_MAX_PLANES] = {NULL};
@@ -723,19 +720,16 @@ void V4L2Capture::selectCaptureSlot(bool needRgb24Frame, bool needOriginFrame)
                 if(curRgbFrameBuf == selectRgbFrameBuf2)
                 {
                     curRgbFrameBuf = selectRgbFrameBuf;
-                    curFrameImage = selectRgbFrameImage;
                 }
                 else
                 {
                     curRgbFrameBuf = selectRgbFrameBuf2;
-                    curFrameImage = selectRgbFrameImage2;
                 }
                 //获取并处理队列里的缓冲帧
                 if(ioctlDequeueBuffers(curRgbFrameBuf,originFrameAddr))
                 {
                     //qDebug()<<"selectCaptureSlot-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
                     emit captureRgb24FrameSig(curRgbFrameBuf);
-                    emit captureRgb24ImageSig(curFrameImage);
                     if(originFrameAddr)
                     {
                         emit captureOriginFrameSig(originFrameAddr);

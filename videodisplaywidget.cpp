@@ -1,6 +1,6 @@
 /****************************************************************************
 *
-* Copyright (C) 2019-2023 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2024 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
@@ -12,22 +12,23 @@
 //采集设备对应到linux系统下的文件名
 #define VIDEO_DEVICE "/dev/video5"
 //采集帧宽高
-#define FRAME_WIDTH (720)
-#define FRAME_HEIGHT (576)
+#define FRAME_WIDTH (960)
+#define FRAME_HEIGHT (400)
 
 VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     QWidget(parent)
 {
     //展示视频画面
-#ifdef USE_OPENGL_DISPLAY
-    videoOutput = new PixmapWidget(this);
-#else
-    videoOutput = new QLabel(this);
-    videoOutput->setStyleSheet("border:2px solid black;");
-    videoOutput->setScaledContents(true);//按照label的大小放缩视频
-#endif
+#ifdef USE_YUV_RENDERING_WIDGET
+    videoOutput = new YuvRenderingWidget(V4L2_PIX_FMT_NV12,FRAME_WIDTH,FRAME_HEIGHT,this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
     //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
+    videoOutput->readYuvFileTest("./video/nv12_960x400.yuv");
+#else
+    videoOutput = new PixmapWidget(this);
+    videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
+    //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
+#endif
 
     //采集开始/结束按钮
     captureBtn = new QPushButton(this);
@@ -53,41 +54,28 @@ VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     gridLayout->addWidget(quitBtn,2,7,1,1);
     this->resize(1024,600);
 
-    //定时采集或者select采集选一种
-    //initTimerCapture();
+#ifdef USE_SELECT_CAPTURE
     initSelectCapture();
-
+#else
+    initTimerCapture();
+#endif
 }
 
 VideoDisplayWidget::~VideoDisplayWidget()
 {
-    if(useSelectCapture && v4l2Capture)
+#ifdef USE_SELECT_CAPTURE
+    if(v4l2Capture)
     {
         delete v4l2Capture;
     }
+#else
     if(timerRgbFrameBuf)
     {
         free(timerRgbFrameBuf);
     }
+#endif
 }
-/*
- *@brief:  定时采集相关初始化
- *@author: 缪庆瑞
- *@date:   2022.08.16
- */
-void VideoDisplayWidget::initTimerCapture()
-{
-    useSelectCapture = false;
-
-    v4l2Capture = new V4L2Capture(useSelectCapture,this);//视频采集对象
-    initV4l2CaptureDevice();
-
-    timerRgbFrameBuf = (uchar *)malloc(FRAME_WIDTH*FRAME_HEIGHT*3);//为图像帧分配内存空间
-    timerImage = QImage(timerRgbFrameBuf,FRAME_WIDTH,FRAME_HEIGHT,QImage::Format_RGB888);//根据内存空间创建image图像
-    timer = new QTimer(this);//定时获取视频帧
-    connect(timer,SIGNAL(timeout()),this,SLOT(timerCaptureFrameSlot()));
-
-}
+#ifdef USE_SELECT_CAPTURE
 /*
  *@brief:  select自动采集相关初始化
  *@author: 缪庆瑞
@@ -95,15 +83,68 @@ void VideoDisplayWidget::initTimerCapture()
  */
 void VideoDisplayWidget::initSelectCapture()
 {
-    useSelectCapture = true;
-
-    v4l2Capture = new V4L2Capture(useSelectCapture,0);//视频采集对象
-//    connect(v4l2Capture,SIGNAL(captureRgb24FrameSig(uchar *)),
-//            this,SLOT(captrueRgb24FrameSlot(uchar*)));
-    connect(v4l2Capture,SIGNAL(captureRgb24ImageSig(const QImage&)),
-            this,SLOT(captureRgb24ImageSlot(const QImage&)));
+    v4l2Capture = new V4L2Capture(true,0);//视频采集对象
     initV4l2CaptureDevice();
+#ifdef USE_YUV_RENDERING_WIDGET
+    //connect(v4l2Capture,SIGNAL(captureOriginFrameSig(uchar*[])),videoOutput,SLOT(updateYuvFrameSlot(uchar*[])));
+#else
+    connect(v4l2Capture,&V4L2Capture::captureRgb24FrameSig,
+            this,[this](uchar *rgb24Frame){
+        if(this->isVisible())
+        {
+            QImage selectImage(rgb24Frame,FRAME_WIDTH,FRAME_HEIGHT,QImage::Format_RGB888);
+            videoOutput->setPixmap(QPixmap::fromImage(selectImage));//屏幕显示
+            videoOutput->update();//刷新显示
+            if(isSaveImage)//保存图片
+            {
+                isSaveImage = false;
+                selectImage.save(QTime::currentTime().toString("HHmmsszzz")+".png",nullptr,100);
+            }
+        }
+    });
+#endif
 }
+#else
+/*
+ *@brief:  定时采集相关初始化
+ *@author: 缪庆瑞
+ *@date:   2022.08.16
+ */
+void VideoDisplayWidget::initTimerCapture()
+{
+    v4l2Capture = new V4L2Capture(false,this);//视频采集对象
+    initV4l2CaptureDevice();
+
+#ifdef USE_YUV_RENDERING_WIDGET
+    uchar *orignFrameAddr[8];
+    timer = new QTimer(this);//定时获取视频帧
+    connect(timer,&QTimer::timeout,this,[this,&orignFrameAddr](){
+        if(this->isVisible())//仅当前界面被展示才获取界面
+        {
+            v4l2Capture->ioctlDequeueBuffers(nullptr,orignFrameAddr);
+            videoOutput->updateYuvFrameSlot(orignFrameAddr);
+        }
+    });
+#else
+    timerRgbFrameBuf = (uchar *)malloc(FRAME_WIDTH*FRAME_HEIGHT*3);//为图像帧分配内存空间
+    timerImage = QImage(timerRgbFrameBuf,FRAME_WIDTH,FRAME_HEIGHT,QImage::Format_RGB888);//根据内存空间创建image图像
+    timer = new QTimer(this);//定时获取视频帧
+    connect(timer,&QTimer::timeout,this,[this](){
+        if(this->isVisible())//仅当前界面被展示才获取界面
+        {
+            v4l2Capture->ioctlDequeueBuffers(timerRgbFrameBuf);//获取一帧RGB格式图片流
+            videoOutput->setPixmap(QPixmap::fromImage(timerImage));//屏幕显示
+            videoOutput->update();//刷新显示
+            if(isSaveImage)//保存图片
+            {
+                isSaveImage = false;
+                timerImage.save(QTime::currentTime().toString("HHmmsszzz")+".png",nullptr,100);
+            }
+        }
+    });
+#endif
+}
+#endif
 /*
  *@brief:  开始采集/停止采集 按钮响应槽
  *@author: 缪庆瑞
@@ -111,35 +152,36 @@ void VideoDisplayWidget::initSelectCapture()
  */
 void VideoDisplayWidget::captureBtnClickedSlot()
 {
-    if(useSelectCapture)
+#ifdef USE_SELECT_CAPTURE
+    if(captureBtn->text() == "start capture")
     {
-        if(captureBtn->text() == "start capture")
-        {
-            captureBtn->setText("stop capture");
-            v4l2Capture->ioctlSetStreamSwitch(true);
-            emit v4l2Capture->selectCaptureSig(true,false);
-        }
-        else
-        {
-            captureBtn->setText("start capture");
-            v4l2Capture->ioctlSetStreamSwitch(false);
-        }
+        captureBtn->setText("stop capture");
+        v4l2Capture->ioctlSetStreamSwitch(true);
+#ifdef USE_YUV_RENDERING_WIDGET
+        emit v4l2Capture->selectCaptureSig(false,true);
+#else
+        emit v4l2Capture->selectCaptureSig(true,flase);
+#endif
     }
     else
     {
-        if(captureBtn->text() == "start capture")
-        {
-            captureBtn->setText("stop capture");
-            v4l2Capture->ioctlSetStreamSwitch(true);//开始视频采集
-            timer->start(30);
-        }
-        else
-        {
-            captureBtn->setText("start capture");
-            v4l2Capture->ioctlSetStreamSwitch(false);
-            timer->stop();
-        }
+        captureBtn->setText("start capture");
+        v4l2Capture->ioctlSetStreamSwitch(false);
     }
+#else
+    if(captureBtn->text() == "start capture")
+    {
+        captureBtn->setText("stop capture");
+        v4l2Capture->ioctlSetStreamSwitch(true);//开始视频采集
+        timer->start(30);
+    }
+    else
+    {
+        captureBtn->setText("start capture");
+        v4l2Capture->ioctlSetStreamSwitch(false);
+        timer->stop();
+    }
+#endif
 }
 /*
  *@brief:  保存当前图片
@@ -149,67 +191,6 @@ void VideoDisplayWidget::captureBtnClickedSlot()
 void VideoDisplayWidget::saveImageBtnClickedSlot()
 {
     isSaveImage = true;
-}
-/*
- *@brief:  采集定时器超时响应槽
- *@author: 缪庆瑞
- *@date:   2022.08.19
- */
-void VideoDisplayWidget::timerCaptureFrameSlot()
-{
-    //qDebug()<<"timerCaptureFrameSlot-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-    if(this->isVisible())//仅当前界面被展示才获取界面
-    {
-        v4l2Capture->ioctlDequeueBuffers(timerRgbFrameBuf);//获取一帧RGB格式图片流
-        videoOutput->setPixmap(QPixmap::fromImage(timerImage));//屏幕显示
-        videoOutput->update();//刷新显示
-        if(isSaveImage)//保存图片
-        {
-            isSaveImage = false;
-            timerImage.save(QTime::currentTime().toString("HHmmsszzz")+".png",nullptr,100);
-        }
-    }
-}
-/*
- *@brief:  select自动采集上传的rgb帧信号
- *@author: 缪庆瑞
- *@date:   2022.08.16
- *@param:   rgb24Frame:原始rgb24数据
- */
-void VideoDisplayWidget::captrueRgb24FrameSlot(uchar *rgb24Frame)
-{
-    //qDebug()<<"selectCaptureFrameSlot-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-    if(this->isVisible())
-    {
-        QImage selectImage(rgb24Frame,FRAME_WIDTH,FRAME_HEIGHT,QImage::Format_RGB888);
-        videoOutput->setPixmap(QPixmap::fromImage(selectImage));//屏幕显示
-        videoOutput->update();//刷新显示
-        if(isSaveImage)//保存图片
-        {
-            isSaveImage = false;
-            selectImage.save(QTime::currentTime().toString("HHmmsszzz")+".png",nullptr,100);
-        }
-    }
-}
-/*
- *@brief:  select自动采集上传的QImage信号
- *@author: 缪庆瑞
- *@date:   2022.08.16
- *@param:   rgb24Image:封装好的QImage
- */
-void VideoDisplayWidget::captureRgb24ImageSlot(const QImage &rgb24Image)
-{
-    //qDebug()<<"selectCaptureFrameSlot-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
-    if(this->isVisible())
-    {
-        videoOutput->setPixmap(QPixmap::fromImage(rgb24Image));//屏幕显示
-        videoOutput->update();//刷新显示
-        if(isSaveImage)//保存图片
-        {
-            isSaveImage = false;
-            rgb24Image.save(QTime::currentTime().toString("HHmmsszzz")+".png",nullptr,100);
-        }
-    }
 }
 /*
  *@brief:  初始化视频采集设备

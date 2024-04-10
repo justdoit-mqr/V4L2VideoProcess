@@ -1,13 +1,18 @@
 /****************************************************************************
 *
-* Copyright (C) 2019-2023 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2024 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/
+/*
+ *@author:  缪庆瑞
+ *@date:    2022.08.19
+ *@brief:   用来动态刷新显示Pixmap的控件
+ */
 #include "pixmapwidget.h"
 #include <QPainter>
 
-PixmapWidget::PixmapWidget(QWidget *parent) : QOpenGLWidget(parent)
+PixmapWidget::PixmapWidget(QWidget *parent) : PARENT_WIDGET(parent)
 {
 
 }
@@ -33,7 +38,7 @@ void PixmapWidget::setPixmap(const QPixmap &pixmap)
  */
 void PixmapWidget::paintEvent(QPaintEvent *event)
 {
-    QOpenGLWidget::paintEvent(event);
+    PARENT_WIDGET::paintEvent(event);
 
     QPainter painter(this);
     /* 对pixmap使用平滑转换算法放缩渲染

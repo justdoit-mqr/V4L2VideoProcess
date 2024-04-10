@@ -32,9 +32,15 @@ YUV 4:2:0采样，该格式亮度和色度采样比例4:1，每四个Y共用一�
 ```
 注:有关更多的YUV格式及采样情况，请自行上网搜索，另外在document/v4l2.pdf(v4l2 API说明书)文档内也提供了一些常见yuv格式采样的字节顺序。
 ##### 1.2.2.YUV--RGB转换公式
-网上关于YUV--RGB的转换公式有好多种，而且有些差别很大，但那些公式基本都是对的，只不过是公式的定义域与值域不同。如果将公式中的 YUV 和 RGB 的取值范围统一成相同的，那么最终得到的公式基本一致，即便系数有些细微的差别，但最后计算的结果差异很小，基本上眼睛看不出区别来。
+网上关于YUV--RGB的转换公式有好多种，而且有些差别很大，但那些公式基本都是对的，只不过是采用的是不同的标准(BT601/BT709/BT2020)，以及同一种标准下又区分不同的range(各分量的定义域)。  
+BT601主要是针对SDTV的标清视频(480i)定义的标准,BT709主要是针对HDTV(720P及以上)的高清视频，相对较新，使用也比较广泛。二者在转换公式上本质的区别就是转换系数不同，所以如果转换标准不匹配可能就会出现色彩偏差或失真的情况。BT2020是针对超高清的视频，目前用的还比较少。  
+上面提到即便是同一种标准，又区分不同的range，导致转换公式依然不同。当yuv作为模拟信号时，range是(Y∈[0,1] U,V∈[-0.5,0.5])，而当用作数字信号时，range分为TV range(Y~[16,235] Cb~[16-240] Cr~[16-240]，量化范围)和Full range(各分量范围0-255，未量化范围)。  
+不同标准不同range有不同的转换公式如下图  
+![bt601.png](./images/bt601.png "bt601.png")  
+![bt709.png](./images/bt709.png "bt709.png")
+![bt2020.png](./images/bt2020.png "bt2020.png")
 ```
-yuv<---->rgb格式转换常用公式(CCIR 601)：
+yuv<---->rgb格式转换常用公式(CCIR BT601)：
 注:下述公式yuv和rgb值区间均为[0,255]
 浮点计算(效率低) 
 R=Y+1.403*(V−128)
@@ -99,6 +105,7 @@ public slots:
 4. [YUV到RGB颜色空间转换算法研究](https://wenku.baidu.com/view/f57562ec04a1b0717fd5ddae.html)  
 5. [YUV图解(YUV444, YUV422, YUV420, YV12, NV12, NV21)](https://blog.csdn.net/xjhhjx/article/details/80291465)  
 6. [YUV图像格式存储方式(YUV420_NV12、YUV420_NV21、YUV422_YUYV、YUV422_YUY2)](https://blog.csdn.net/u012633319/article/details/95669597)
+7. [BT601/BT709/BT2020 YUV2RGB RGB2YUV 公式](https://blog.csdn.net/m18612362926/article/details/127667954)
 
 ## 作者联系方式
 **邮箱:justdoit_mqr@163.com**  
