@@ -12,8 +12,8 @@
 //采集设备对应到linux系统下的文件名
 #define VIDEO_DEVICE "/dev/video5"
 //采集帧宽高
-#define FRAME_WIDTH (960)
-#define FRAME_HEIGHT (400)
+#define FRAME_WIDTH (1024)
+#define FRAME_HEIGHT (576)
 
 VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     QWidget(parent)
@@ -23,7 +23,7 @@ VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     videoOutput = new YuvRenderingWidget(V4L2_PIX_FMT_NV12,FRAME_WIDTH,FRAME_HEIGHT,this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
     //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
-    videoOutput->readYuvFileTest("./video/nv12_960x400.yuv");
+    videoOutput->readYuvFileTest("./video/nv12_1024x576.yuv");
 #else
     videoOutput = new PixmapWidget(this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);

@@ -19,7 +19,7 @@
  *@brief:  构造函数
  *@date:   2024.04.05
  *@param:  pixel_format:帧格式(使用v4l2的宏)
- *@param:  pixel_width:像素宽度  pixel_height:像素高度
+ *@param:  pixel_width:像素宽度(需要确保为偶数)  pixel_height:像素高度
  */
 YuvRenderingWidget::YuvRenderingWidget(uint pixel_format, uint pixel_width, uint pixel_height, QWidget *parent)
     : QOpenGLWidget(parent),pixelFormat(pixel_format),pixelWidth(pixel_width),pixelHeight(pixel_height),
@@ -382,12 +382,22 @@ void YuvRenderingWidget::initTexture()
         texture1.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture1.setWrapMode(QOpenGLTexture::ClampToEdge);
         texture1.allocateStorage();
+        if(pixelWidth%4)
+        {
+            //默认4字节对齐，当行像素字节不是4的整数倍时，改变为2字节对齐(前提确保pixelWidth为偶数)
+            pixelTransferOptions1.setAlignment(2);
+        }
         //纹理2对应uv分量通道
         texture2.setSize(pixelWidth/2,pixelHeight/2);//yuv420格式，uv宽高均除以2
         texture2.setFormat(QOpenGLTexture::LuminanceAlphaFormat);//双通道格式(每一个点有两个数据)
         texture2.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture2.setWrapMode(QOpenGLTexture::ClampToEdge);
         texture2.allocateStorage();
+        if(pixelWidth%4)
+        {
+            //默认4字节对齐，当行像素字节不是4的整数倍时，改变为2字节对齐(前提确保pixelWidth为偶数)
+            pixelTransferOptions2.setAlignment(2);
+        }
     }
     //three planes格式，需要三个纹理(Y,U，V)
     else if(pixelFormat == V4L2_PIX_FMT_YUV420 ||
@@ -399,6 +409,11 @@ void YuvRenderingWidget::initTexture()
         texture1.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture1.setWrapMode(QOpenGLTexture::ClampToEdge);
         texture1.allocateStorage();
+        if(pixelWidth%4)
+        {
+            //默认4字节对齐，当行像素字节不是4的整数倍时，改变为2字节对齐(前提确保pixelWidth为偶数)
+            pixelTransferOptions1.setAlignment(2);
+        }
         //纹理2对应u/v分量通道
         texture2.setSize(pixelWidth/2,pixelHeight/2);//yuv420格式，uv宽高均除以2
         texture2.setFormat(QOpenGLTexture::LuminanceFormat);//单通道格式
@@ -411,6 +426,21 @@ void YuvRenderingWidget::initTexture()
         texture3.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture3.setWrapMode(QOpenGLTexture::ClampToEdge);
         texture3.allocateStorage();
+        if((pixelWidth/2)%4)//纹理2和纹理3像素宽度和通道格式一致，对齐方式也保持一致即可
+        {
+            if((pixelWidth/2)%2)
+            {
+                //默认4字节对齐，当行像素字节不是4的整数倍时，且不是2的整数倍，改变为1字节对齐
+                pixelTransferOptions2.setAlignment(1);
+                pixelTransferOptions3.setAlignment(1);
+            }
+            else
+            {
+                //默认4字节对齐，当行像素字节不是4的整数倍时，改变为2字节对齐(前提确保pixelWidth/2为偶数)
+                pixelTransferOptions2.setAlignment(2);
+                pixelTransferOptions3.setAlignment(2);
+            }
+        }
     }
 }
 /*
@@ -478,25 +508,25 @@ void YuvRenderingWidget::updateYuvFrameSlot(uchar *yuvFrame[])
             pixelFormat == V4L2_PIX_FMT_YVYU)
     {
         //纹理对象能够根据size自动读取对应字节的数据
-        texture1.setData(QOpenGLTexture::LuminanceAlpha, QOpenGLTexture::UInt8, yuvFrame[0]);
-        texture2.setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, yuvFrame[0]);
+        texture1.setData(QOpenGLTexture::LuminanceAlpha, QOpenGLTexture::UInt8, yuvFrame[0],&pixelTransferOptions1);
+        texture2.setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, yuvFrame[0],&pixelTransferOptions2);
     }
     //two planes格式，设置两个纹理对象数据
     else if(pixelFormat == V4L2_PIX_FMT_NV12 ||
             pixelFormat == V4L2_PIX_FMT_NV21)
     {
         //纹理对象能够根据size自动读取对应字节的数据
-        texture1.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0]);
-        texture2.setData(QOpenGLTexture::LuminanceAlpha, QOpenGLTexture::UInt8, yuvFrame[0]+pixelWidth*pixelHeight);
+        texture1.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0],&pixelTransferOptions1);
+        texture2.setData(QOpenGLTexture::LuminanceAlpha, QOpenGLTexture::UInt8, yuvFrame[0]+pixelWidth*pixelHeight,&pixelTransferOptions2);
     }
     //three planes格式，设置三个纹理对象数据
     else if(pixelFormat == V4L2_PIX_FMT_YUV420 ||
             pixelFormat == V4L2_PIX_FMT_YVU420)
     {
         //纹理对象能够根据size自动读取对应字节的数据
-        texture1.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0]);
-        texture2.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0]+pixelWidth*pixelHeight);
-        texture3.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0]+pixelWidth*pixelHeight*5/4);
+        texture1.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0],&pixelTransferOptions1);
+        texture2.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0]+pixelWidth*pixelHeight,&pixelTransferOptions2);
+        texture3.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0]+pixelWidth*pixelHeight*5/4,&pixelTransferOptions3);
     }
 
     update();

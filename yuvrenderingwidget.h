@@ -19,7 +19,7 @@
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLBuffer>
 #include <QOpenGLTexture>
-#include <QOpenGLDebugLogger>
+#include <QOpenGLPixelTransferOptions>
 
 class YuvRenderingWidget : public QOpenGLWidget,protected QOpenGLExtraFunctions
 {
@@ -49,9 +49,16 @@ private:
 
     QOpenGLVertexArrayObject VAO;//存储顶点数据的来源与解析方式(管理VBO的状态数据)
     QOpenGLBuffer VBO;//缓存顶点数据(在显存中)
-    QOpenGLTexture texture1;//纹理对象1
-    QOpenGLTexture texture2;//纹理对象2
-    QOpenGLTexture texture3;//纹理对象3
+    //纹理对象
+    QOpenGLTexture texture1;
+    QOpenGLTexture texture2;
+    QOpenGLTexture texture3;
+    /*纹理对象更新纹理数据时，像素解包的存储方式
+     *这里主要设置字节对齐,opengl默认为4字节对齐,当像素行字节数不是4的整数倍时，就要改变对齐方式(GL_UNPACK_ALIGNMENT)，否则就会
+     *因为每一行尾部读取下一行头部的数据导致整个画面倾斜。注：字节对齐越小效率越低，所以根据情况适当选择*/
+    QOpenGLPixelTransferOptions pixelTransferOptions1;
+    QOpenGLPixelTransferOptions pixelTransferOptions2;
+    QOpenGLPixelTransferOptions pixelTransferOptions3;
 
     QString vertexShader;//顶点着色器
     QString fragmentShader;//片段着色器
