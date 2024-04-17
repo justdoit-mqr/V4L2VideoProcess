@@ -85,7 +85,12 @@ void YuvRenderingWidget::readYuvFileTest(QString file)
 }
 /*
  *@brief:  建立OpenGL的资源和状态
- *在第一次调用resizeGL()或paintGL()之前会被调用一次
+ *注：通常情况下该函数仅会在第一次调用resize事件时会被调用一次，但在我们的RK3568(Qt5.15.8)上实测发现会被调用两次。
+ *通过分析Qt源代码发现在resize事件触发opengl初始化后，在show事件处理时会判断内部QOpenGLContext的共享上下文是否与窗体
+ *的共享上下文一致，如果不一致会重新初始化。我们的板子运行会初始化两次，并且实测两次初始化环境的当前上下文是不同的。根据show
+ *事件的源代码处理可知，如果设置了“QApplication::setAttribute(Qt::AA_ShareOpenGLContexts, true);”则初始化只会执行
+ *一次，不过该操作意味着应用程序中不同的顶层窗口之间也能共享上下文。如果不想这么做，则可以优化initializeGL()函数内部的处理
+ *使其支持多次调用，这也是目前采取的方案(关键点是在initTextures()函数中处理纹理对象的销毁和创建)。
  *@date:   2024.04.05
  */
 void YuvRenderingWidget::initializeGL()
@@ -93,6 +98,10 @@ void YuvRenderingWidget::initializeGL()
     initializeOpenGLFunctions();//绑定QOpenGLFunctions的上下文
     glClearColor(1.0f,0.0f,0.0f,1.0f);//设置清屏颜色
     glClear(GL_COLOR_BUFFER_BIT);//清空颜色缓冲区
+
+    /*0.关联上下文的销毁信号，用来销毁OpenGL纹理对象*/
+    connect(QOpenGLContext::currentContext(),&QOpenGLContext::aboutToBeDestroyed,
+            this,&YuvRenderingWidget::destroyTexture,Qt::DirectConnection);
 
     /*1.初始化VAO和VBO*/
     VAO.create();//创建顶点数组对象
@@ -122,6 +131,7 @@ void YuvRenderingWidget::initializeGL()
     initTexture();
 
     /*4.初始化着色器程序*/
+    shaderProgram.removeAllShaders();
     shaderProgram.addShaderFromSourceCode(QOpenGLShader::Vertex,vertexShader);//附加顶点着色器和片段着色器
     shaderProgram.addShaderFromSourceCode(QOpenGLShader::Fragment,fragmentShader);
     shaderProgram.link();//链接着色器
@@ -199,8 +209,20 @@ void YuvRenderingWidget::initVertexShader()
             vertexShader.replace("attribute","in");
             vertexShader.replace("varying","out");
         }
+
         //添加version头
-        vertexShader.prepend(QString("#version %1\n").arg(glslVersion));
+        if(glslVersionStr.contains("ES",Qt::CaseInsensitive))
+        {
+            if(glslVersion >= 300)
+            {
+                //仅OpenGL ES 3.0及以上添加版本头
+                vertexShader.prepend(QString("#version %1 es\n").arg(glslVersion));
+            }
+        }
+        else
+        {
+            vertexShader.prepend(QString("#version %1\n").arg(glslVersion));
+        }
     }
     //qDebug()<<"vertexShader:"<<vertexShader;
 }
@@ -333,13 +355,25 @@ void YuvRenderingWidget::initFragmentShader()
             fragmentShader.replace("varying","in");
             fragmentShader.replace("texture2D","texture");
             fragmentShader.replace("gl_FragColor","FragColor");
-            //添加version头
-            fragmentShader.prepend(QString("#version %1\n").arg(glslVersion));
+        }
+
+        //添加version头
+        if(glslVersionStr.contains("ES",Qt::CaseInsensitive))
+        {
+            if(glslVersion >= 300)
+            {
+                //OpenGL ES 3.0及以上加上版本标识ES，并指定精度(ES的特有操作)
+                fragmentShader.prepend(QString("#version %1 es\nprecision mediump float;").arg(glslVersion));
+            }
+            else
+            {
+                //OpenGL ES 2.0不用加版本头，仅指定精度(ES的特有操作)
+                fragmentShader.prepend(QString("precision mediump float;").arg(glslVersion));
+            }
         }
         else
         {
-            //添加version头和默认精度(低版本需要明确指定精度)
-            fragmentShader.prepend(QString("#version %1\nprecision highp float;").arg(glslVersion));
+            fragmentShader.prepend(QString("#version %1\n").arg(glslVersion));
         }
     }
 
@@ -364,13 +398,13 @@ void YuvRenderingWidget::initTexture()
         texture1.setFormat(QOpenGLTexture::LuminanceAlphaFormat);//双通道格式(每两个字节提取一个Y)
         texture1.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture1.setWrapMode(QOpenGLTexture::ClampToEdge);
-        texture1.allocateStorage();
+        texture1.allocateStorage(QOpenGLTexture::LuminanceAlpha,QOpenGLTexture::UInt8);
         //纹理2对应uv分量通道
         texture2.setSize(pixelWidth/2,pixelHeight);//yuv422格式，uv宽除以2，高不变
         texture2.setFormat(QOpenGLTexture::RGBAFormat);//四通道格式(每四个字节提取一组UV)
         texture2.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture2.setWrapMode(QOpenGLTexture::ClampToEdge);
-        texture2.allocateStorage();
+        texture2.allocateStorage(QOpenGLTexture::RGBA,QOpenGLTexture::UInt8);
     }
     //two planes格式，需要两个纹理(Y,UV)
     else if(pixelFormat == V4L2_PIX_FMT_NV12 ||
@@ -381,7 +415,7 @@ void YuvRenderingWidget::initTexture()
         texture1.setFormat(QOpenGLTexture::LuminanceFormat);//单通道格式
         texture1.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture1.setWrapMode(QOpenGLTexture::ClampToEdge);
-        texture1.allocateStorage();
+        texture1.allocateStorage(QOpenGLTexture::Luminance,QOpenGLTexture::UInt8);
         if(pixelWidth%4)
         {
             //默认4字节对齐，当行像素字节不是4的整数倍时，改变为2字节对齐(前提确保pixelWidth为偶数)
@@ -392,7 +426,7 @@ void YuvRenderingWidget::initTexture()
         texture2.setFormat(QOpenGLTexture::LuminanceAlphaFormat);//双通道格式(每一个点有两个数据)
         texture2.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture2.setWrapMode(QOpenGLTexture::ClampToEdge);
-        texture2.allocateStorage();
+        texture2.allocateStorage(QOpenGLTexture::LuminanceAlpha,QOpenGLTexture::UInt8);
         if(pixelWidth%4)
         {
             //默认4字节对齐，当行像素字节不是4的整数倍时，改变为2字节对齐(前提确保pixelWidth为偶数)
@@ -408,7 +442,7 @@ void YuvRenderingWidget::initTexture()
         texture1.setFormat(QOpenGLTexture::LuminanceFormat);//单通道格式
         texture1.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture1.setWrapMode(QOpenGLTexture::ClampToEdge);
-        texture1.allocateStorage();
+        texture1.allocateStorage(QOpenGLTexture::Luminance,QOpenGLTexture::UInt8);
         if(pixelWidth%4)
         {
             //默认4字节对齐，当行像素字节不是4的整数倍时，改变为2字节对齐(前提确保pixelWidth为偶数)
@@ -419,13 +453,13 @@ void YuvRenderingWidget::initTexture()
         texture2.setFormat(QOpenGLTexture::LuminanceFormat);//单通道格式
         texture2.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture2.setWrapMode(QOpenGLTexture::ClampToEdge);
-        texture2.allocateStorage();
+        texture2.allocateStorage(QOpenGLTexture::Luminance,QOpenGLTexture::UInt8);
         //纹理3对应u/v分量通道
         texture3.setSize(pixelWidth/2,pixelHeight/2);//yuv420格式，uv宽高均除以2
         texture3.setFormat(QOpenGLTexture::LuminanceFormat);//单通道格式
         texture3.setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
         texture3.setWrapMode(QOpenGLTexture::ClampToEdge);
-        texture3.allocateStorage();
+        texture3.allocateStorage(QOpenGLTexture::Luminance,QOpenGLTexture::UInt8);
         if((pixelWidth/2)%4)//纹理2和纹理3像素宽度和通道格式一致，对齐方式也保持一致即可
         {
             if((pixelWidth/2)%2)
@@ -487,6 +521,31 @@ void YuvRenderingWidget::drawTexture()
         texture2.release();
         texture3.release();
     }
+}
+/*
+ *@brief:  销毁OpenGL纹理对象
+ *销毁纹理对象必须在创建纹理对象的上下文中，所以将该函数关联QOpenGLContext::aboutToBeDestroyed信号。
+ *正常情况下在析构函数中随着QOpenGLTexture对象的销毁，OpenGL纹理对象也会跟着销毁，所以不需要单独处理。但是我们的板子遇到了
+ *执行两次initializeGL()的情况，且第一次初始化的上下文很快就销毁了，而在该上下文中创建的纹理对象必须通过信号去销毁，否则将导致
+ *第二次初始化的上下文无法使用创建好的纹理对象，又无法销毁。
+ *@date:   2024.04.17
+ */
+void YuvRenderingWidget::destroyTexture()
+{
+    makeCurrent();
+    if(texture1.isCreated())
+    {
+       texture1.destroy();
+    }
+    if(texture2.isCreated())
+    {
+       texture2.destroy();
+    }
+    if(texture3.isCreated())
+    {
+       texture3.destroy();
+    }
+    doneCurrent();
 }
 /*
  *@brief:  更新(渲染)yuv帧数据

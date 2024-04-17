@@ -42,6 +42,7 @@ private:
     void initFragmentShader();
     void initTexture();
     void drawTexture();
+    void destroyTexture();
 
     uint pixelFormat = 0;//采集帧格式
     uint pixelWidth = 0;//像素宽度
