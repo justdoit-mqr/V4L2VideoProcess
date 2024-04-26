@@ -33,7 +33,7 @@ YuvRenderingWidget::~YuvRenderingWidget()
     makeCurrent();
 }
 /*
- *@brief:  该接口用于功能测试，通过读取yuv文件测试该类的渲染功能
+ *@brief:  该接口仅用于功能测试，通过读取yuv文件测试该类的渲染功能
  *注:可使用FFmpeg工具将mp4格式文件转换成yuv文件进行测试，例如“ffmpeg -i test.mp4 -an -pix_fmt nv12 -s 1024x576 nv12.yuv”
  *FFmpeg支持的格式可通过“ffmpeg -pix_fmts”列出。
  *@date:   2024.04.09
@@ -368,7 +368,7 @@ void YuvRenderingWidget::initFragmentShader()
             else
             {
                 //OpenGL ES 2.0不用加版本头，仅指定精度(ES的特有操作)
-                fragmentShader.prepend(QString("precision mediump float;").arg(glslVersion));
+                fragmentShader.prepend(QString("precision mediump float;"));
             }
         }
         else

@@ -29,7 +29,7 @@ public:
                                 uint pixel_height,QWidget *parent = nullptr);
     ~YuvRenderingWidget();
 
-    //该接口用于功能测试，通过读取yuv文件测试该类的渲染功能
+    //该接口仅用于功能测试，通过读取yuv文件测试该类的渲染功能
     void readYuvFileTest(QString file);
 
 protected:

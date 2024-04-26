@@ -39,6 +39,10 @@ class PixmapWidget : public PARENT_WIDGET
 public:
     explicit PixmapWidget(QWidget *parent = nullptr);
 
+    //该接口仅用于功能测试，通过读取yuv文件测试该类的渲染性能(包含yuv转rgb软解码处理)
+    void readYuvFileTest(QString file,uint pixelFormat,
+                         uint pixelWidth,uint pixelHeight);
+
     void setPixmap(const QPixmap &pixmap);
 
 protected:

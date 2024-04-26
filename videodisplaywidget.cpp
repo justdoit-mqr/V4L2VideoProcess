@@ -12,22 +12,23 @@
 //采集设备对应到linux系统下的文件名
 #define VIDEO_DEVICE "/dev/video5"
 //采集帧宽高
-#define FRAME_WIDTH (1024)
-#define FRAME_HEIGHT (576)
+#define FRAME_WIDTH (854)
+#define FRAME_HEIGHT (480)
 
 VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     QWidget(parent)
 {
     //展示视频画面
 #ifdef USE_YUV_RENDERING_WIDGET
-    videoOutput = new YuvRenderingWidget(V4L2_PIX_FMT_NV12,FRAME_WIDTH,FRAME_HEIGHT,this);
+    videoOutput = new YuvRenderingWidget(V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT,this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
     //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
-    videoOutput->readYuvFileTest("./video/nv12_1024x576.yuv");
+    videoOutput->readYuvFileTest("./video/nv21_854x480.yuv");
 #else
     videoOutput = new PixmapWidget(this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
     //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
+    videoOutput->readYuvFileTest("./video/nv21_854x480.yuv",V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
 #endif
 
     //采集开始/结束按钮
@@ -92,7 +93,7 @@ void VideoDisplayWidget::initSelectCapture()
             this,[this](uchar *rgb24Frame){
         if(this->isVisible())
         {
-            QImage selectImage(rgb24Frame,FRAME_WIDTH,FRAME_HEIGHT,QImage::Format_RGB888);
+            QImage selectImage(rgb24Frame,FRAME_WIDTH,FRAME_HEIGHT,FRAME_WIDTH*3,QImage::Format_RGB888);
             videoOutput->setPixmap(QPixmap::fromImage(selectImage));//屏幕显示
             videoOutput->update();//刷新显示
             if(isSaveImage)//保存图片
@@ -127,7 +128,7 @@ void VideoDisplayWidget::initTimerCapture()
     });
 #else
     timerRgbFrameBuf = (uchar *)malloc(FRAME_WIDTH*FRAME_HEIGHT*3);//为图像帧分配内存空间
-    timerImage = QImage(timerRgbFrameBuf,FRAME_WIDTH,FRAME_HEIGHT,QImage::Format_RGB888);//根据内存空间创建image图像
+    timerImage = QImage(timerRgbFrameBuf,FRAME_WIDTH,FRAME_HEIGHT,FRAME_WIDTH*3,QImage::Format_RGB888);//根据内存空间创建image图像
     timer = new QTimer(this);//定时获取视频帧
     connect(timer,&QTimer::timeout,this,[this](){
         if(this->isVisible())//仅当前界面被展示才获取界面
@@ -160,7 +161,7 @@ void VideoDisplayWidget::captureBtnClickedSlot()
 #ifdef USE_YUV_RENDERING_WIDGET
         emit v4l2Capture->selectCaptureSig(false,true);
 #else
-        emit v4l2Capture->selectCaptureSig(true,flase);
+        emit v4l2Capture->selectCaptureSig(true,false);
 #endif
     }
     else

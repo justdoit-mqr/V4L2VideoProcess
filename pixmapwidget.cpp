@@ -10,11 +10,70 @@
  *@brief:   用来动态刷新显示Pixmap的控件
  */
 #include "pixmapwidget.h"
+#include "colortorgb24.h"
+#include <linux/videodev2.h>//v4l2的头文件
 #include <QPainter>
+#include <QFile>
+#include <QTimer>
+#include <QDebug>
 
 PixmapWidget::PixmapWidget(QWidget *parent) : PARENT_WIDGET(parent)
 {
 
+}
+/*
+ *@brief:  该接口仅用于功能测试，通过读取yuv文件测试该类的渲染性能(包含yuv转rgb软解码处理)
+ *注:可使用FFmpeg工具将mp4格式文件转换成yuv文件进行测试，例如“ffmpeg -i test.mp4 -an -pix_fmt nv12 -s 1024x576 nv12.yuv”
+ *FFmpeg支持的格式可通过“ffmpeg -pix_fmts”列出。
+ *@date:   2024.04.26
+ *@param:  file:需要读取的yuv文件
+ *@param:  pixelFormat:yuv的帧格式
+ *@param:  pixelWidth,pixelHeight:帧宽度和高度
+ */
+void PixmapWidget::readYuvFileTest(QString file, uint pixelFormat, uint pixelWidth, uint pixelHeight)
+{
+    uchar * selectRgbFrameBuf = (uchar *)malloc(pixelWidth*pixelHeight*3);
+    QFile *yuvFile = new QFile(file,this);
+    if(yuvFile->open(QIODevice::ReadOnly))
+    {
+        QTimer *readYuvFileTimer = new QTimer(this);
+        readYuvFileTimer->setInterval(40);
+        connect(readYuvFileTimer,&QTimer::timeout,this,[this,selectRgbFrameBuf,yuvFile,
+                pixelFormat,pixelWidth,pixelHeight](){
+            if(yuvFile->atEnd())
+            {
+                yuvFile->seek(0);
+            }
+            if(pixelFormat == V4L2_PIX_FMT_YUYV)
+            {
+                QByteArray array = yuvFile->read(pixelWidth*pixelHeight*2);
+                uchar *yuvFrame[1];
+                yuvFrame[0] = (uchar *)array.data();
+                ColorToRgb24::yuyv_to_rgb24_shift(yuvFrame[0],selectRgbFrameBuf,pixelWidth,pixelHeight);
+                //此处注意QImage的字节对齐，默认是32bit，如果帧宽度不是4的倍数，则需要特别指定bytesPerLine，否则显示会异常
+                QImage selectImage(selectRgbFrameBuf,pixelWidth,pixelHeight,pixelWidth*3,QImage::Format_RGB888);
+                this->setPixmap(QPixmap::fromImage(selectImage));//屏幕显示
+                this->update();//刷新显示
+            }
+            else if(pixelFormat == V4L2_PIX_FMT_NV12 ||
+                    pixelFormat == V4L2_PIX_FMT_NV21)
+            {
+                QByteArray array = yuvFile->read(pixelWidth*pixelHeight*3/2);
+                uchar *yuvFrame[1];
+                yuvFrame[0] = (uchar *)array.data();
+                ColorToRgb24::nv12_21_to_rgb24_shift((pixelFormat==V4L2_PIX_FMT_NV12),yuvFrame[0],selectRgbFrameBuf,pixelWidth,pixelHeight);
+                //此处注意QImage的字节对齐，默认是32bit，如果帧宽度不是4的倍数，则需要特别指定bytesPerLine，否则显示会异常
+                QImage selectImage(selectRgbFrameBuf,pixelWidth,pixelHeight,pixelWidth*3,QImage::Format_RGB888);
+                this->setPixmap(QPixmap::fromImage(selectImage));//屏幕显示
+                this->update();//刷新显示
+            }
+        });
+        readYuvFileTimer->start();
+    }
+    else
+    {
+        qDebug()<<QString("open yuv file %1 failed!").arg(file);
+    }
 }
 /*
  *@brief:  设置要绘制的pixmap
