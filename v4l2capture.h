@@ -73,7 +73,7 @@ public:
 
 signals:
     //向外发射采集到的帧数据信号
-    void captureOriginFrameSig(uchar *originFrame[]);//原始数据帧(pixelFormat,长度针对多平面类型的数量，单平面为1)
+    void captureOriginFrameSig(uchar **originFrame);//原始数据帧(pixelFormat,二维长度针对多平面类型的数量，单平面为1)
     void captureRgb24FrameSig(uchar *rgb24Frame);//转换后的rgb24数据帧
 
     //外部调用，用于触发selectCaptureSlot()槽在子线程中执行

@@ -17,7 +17,7 @@
 #include <QPushButton>
 #include <QTimer>
 #include "pixmapwidget.h"
-#include "yuvrenderingwidget.h"
+#include "openglwidget.h"
 #include "v4l2capture.h"
 
 //是否使用yuv渲染器部件，不定义默认用软解码，通过pixmapWidget渲染
@@ -39,7 +39,7 @@ private:
     bool initV4l2CaptureDevice();//初始化采集设备
 
 #ifdef USE_YUV_RENDERING_WIDGET
-    YuvRenderingWidget *videoOutput;//展示视频画面
+    OpenGLWidget *videoOutput;//展示视频画面
 #else
     PixmapWidget *videoOutput;//展示视频画面
 #endif

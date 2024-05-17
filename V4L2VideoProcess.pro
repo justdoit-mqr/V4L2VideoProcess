@@ -26,19 +26,21 @@ RCC_DIR = ./build
 
 SOURCES += v4l2capture.cpp \
     colortorgb24.cpp \
-    yuvrenderingwidget.cpp
+    v4l2rendering.cpp
 
 HEADERS  += v4l2capture.h \
     colortorgb24.h \
-    yuvrenderingwidget.h
+    v4l2rendering.h
 
 if(contains(TEMPLATE,app)){
 SOURCES += \
     main.cpp \
     pixmapwidget.cpp \
+    openglwidget.cpp \
     videodisplaywidget.cpp
 
 HEADERS += \
     pixmapwidget.h \
+    openglwidget.h \
     videodisplaywidget.h
 }

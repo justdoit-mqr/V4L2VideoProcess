@@ -511,6 +511,9 @@ void V4L2Capture::ioctlSetStreamSwitch(bool on)
 {
     v4l2_buf_type type;
     type = (v4l2_buf_type)v4l2BufType;
+    //先标记采集状态
+    isStreamOn = on;
+
     if(on)
     {
         //启动采集数据流，采集之前需要确保输入队列已放满
@@ -522,8 +525,6 @@ void V4L2Capture::ioctlSetStreamSwitch(bool on)
         //停止采集数据流，停止后会清空输入队列
         ioctl(cameraFd,VIDIOC_STREAMOFF,&type);
     }
-    //标记采集状态
-    isStreamOn = on;
 }
 /*
  *@brief:   从输出队列取缓冲帧，转换成rgb24格式的帧
@@ -648,7 +649,7 @@ void V4L2Capture::unMmapBuffers()
     {
         for(int i = 0;i<BUFFER_COUNT;i++)
         {
-            for(int j=0;i<VIDEO_MAX_PLANES;j++)
+            for(int j=0;j<VIDEO_MAX_PLANES;j++)
             {
                 if(bufferMmapMplanePtr[i].addr[j] != NULL)
                 {

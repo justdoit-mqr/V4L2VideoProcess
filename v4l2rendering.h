@@ -6,14 +6,14 @@
 ****************************************************************************/
 /*
  *@author:  缪庆瑞
- *@date:    2024.04.05
- *@brief:   直接渲染显示yuv数据的部件(基于opengl的api)
+ *@date:    2024.05.17
+ *@brief:   负责渲染处理V4L2帧数据(基于opengl的api)
  */
-#ifndef YUVRENDERINGWIDGET_H
-#define YUVRENDERINGWIDGET_H
+#ifndef V4L2RENDERING_H
+#define V4L2RENDERING_H
 
 #include <linux/videodev2.h>//v4l2的头文件
-#include <QOpenGLWidget>
+#include <QObject>
 #include <QOpenGLExtraFunctions>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLVertexArrayObject>
@@ -21,21 +21,18 @@
 #include <QOpenGLTexture>
 #include <QOpenGLPixelTransferOptions>
 
-class YuvRenderingWidget : public QOpenGLWidget,protected QOpenGLExtraFunctions
+class V4l2Rendering : public QObject,protected QOpenGLExtraFunctions
 {
     Q_OBJECT
 public:
-    explicit YuvRenderingWidget(uint pixel_format,uint pixel_width,
-                                uint pixel_height,QWidget *parent = nullptr);
-    ~YuvRenderingWidget();
+    explicit V4l2Rendering(uint pixel_format,uint pixel_width,
+                                uint pixel_height,QObject *parent=nullptr);
 
-    //该接口仅用于功能测试，通过读取yuv文件测试该类的渲染功能
-    void readYuvFileTest(QString file);
+    void initializeGL();
+    void resizeGL(int w,int h);
+    void paintGL();
 
-protected:
-    virtual void initializeGL();
-    virtual void resizeGL(int w,int h);
-    virtual void paintGL();
+    void updateV4l2Frame(uchar **v4l2FrameData);
 
 private:
     void initVertexShader();
@@ -48,6 +45,9 @@ private:
     uint pixelWidth = 0;//像素宽度
     uint pixelHeight = 0;//像素高度
 
+    //初始化标识
+    bool isInitGl = false;
+    //顶点数据
     QOpenGLVertexArrayObject VAO;//存储顶点数据的来源与解析方式(管理VBO的状态数据)
     QOpenGLBuffer VBO;//缓存顶点数据(在显存中)
     //纹理对象
@@ -63,13 +63,8 @@ private:
 
     QString vertexShader;//顶点着色器
     QString fragmentShader;//片段着色器
-    QOpenGLShaderProgram shaderProgram;//着色器程序
-
-signals:
-
-public slots:
-    void updateYuvFrameSlot(uchar *yuvFrame[]);
+    QOpenGLShaderProgram shaderProgram;//着色器程序    
 
 };
 
-#endif // YUVRENDERINGWIDGET_H
+#endif // V4L2RENDERING_H

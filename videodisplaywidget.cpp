@@ -10,7 +10,7 @@
 #include <QDebug>
 
 //采集设备对应到linux系统下的文件名
-#define VIDEO_DEVICE "/dev/video5"
+#define VIDEO_DEVICE "/dev/video1"
 //采集帧宽高
 #define FRAME_WIDTH (854)
 #define FRAME_HEIGHT (480)
@@ -20,15 +20,15 @@ VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
 {
     //展示视频画面
 #ifdef USE_YUV_RENDERING_WIDGET
-    videoOutput = new YuvRenderingWidget(V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT,this);
+    videoOutput = new OpenGLWidget(V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT,this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
     //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
-    videoOutput->readYuvFileTest("./video/nv21_854x480.yuv");
+    //videoOutput->readYuvFileTest("./video/nv21_854x480.yuv",V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
 #else
     videoOutput = new PixmapWidget(this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
     //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
-    videoOutput->readYuvFileTest("./video/nv21_854x480.yuv",V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
+    //videoOutput->readYuvFileTest("./video/nv21_854x480.yuv",V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
 #endif
 
     //采集开始/结束按钮
@@ -87,7 +87,7 @@ void VideoDisplayWidget::initSelectCapture()
     v4l2Capture = new V4L2Capture(true,0);//视频采集对象
     initV4l2CaptureDevice();
 #ifdef USE_YUV_RENDERING_WIDGET
-    //connect(v4l2Capture,SIGNAL(captureOriginFrameSig(uchar*[])),videoOutput,SLOT(updateYuvFrameSlot(uchar*[])));
+    connect(v4l2Capture,SIGNAL(captureOriginFrameSig(uchar**)),videoOutput,SLOT(updateV4l2FrameSlot(uchar**)));
 #else
     connect(v4l2Capture,&V4L2Capture::captureRgb24FrameSig,
             this,[this](uchar *rgb24Frame){
@@ -216,7 +216,7 @@ bool VideoDisplayWidget::initV4l2CaptureDevice()
     v4l2Capture->ioctlEnumFmt();
     /*设置采集数据的一些参数及格式(必选项)*/
     v4l2Capture->ioctlSetStreamParm(2,25);//T517驱动传递2
-    v4l2Capture->ioctlSetStreamFmt(V4L2_PIX_FMT_NV12,FRAME_WIDTH,FRAME_HEIGHT);
+    v4l2Capture->ioctlSetStreamFmt(V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
     /*设置完参数后稍作延时，这个很关键，否则可能会出现进程退出的情况*/
     usleep(100000);
     /*申请视频帧缓冲区,对帧缓冲区进行内存映射(必选项)*/

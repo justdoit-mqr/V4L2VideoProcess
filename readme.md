@@ -87,7 +87,7 @@ B=Y+u+((197*u)>>8)
 
 signals:
     //向外发射采集到的帧数据信号
-    void captureOriginFrameSig(uchar *originFrame[]);//原始数据帧(pixelFormat,长度针对多平面类型的数量，单平面为1)
+    void captureOriginFrameSig(uchar **originFrame);//原始数据帧(pixelFormat,二维长度针对多平面类型的数量，单平面为1)
     void captureRgb24FrameSig(uchar *rgb24Frame);//转换后的rgb24数据帧
 
     //外部调用，用于触发selectCaptureSlot()槽在子线程中执行
@@ -95,18 +95,18 @@ signals:
     
 ```
 ## 2.视频渲染模块
-该项目提供两种渲染视频帧的方式，一种是需要先cpu软解码生成rgb24数据，将rgb24数据封装成QImage，传递给PixmapWidget部件显示。第二种是直接将yuv原生数据传递给YuvRenderingWidget部件，内部调用Opengl接口由硬解码转成rgb数据后渲染。相比较而言，第二种完全的硬解码渲染处理性能更高，但前提需要硬件GPU支持。
+该项目提供两种渲染视频帧的方式，一种是需要先cpu软解码生成rgb24数据，将rgb24数据封装成QImage，传递给PixmapWidget部件显示。第二种是直接将yuv原生数据传递给OpenGLWidget部件，内部通过V4l2Rendering调用Opengl接口由硬解码转成rgb数据后渲染。相比较而言，第二种完全的硬解码渲染处理性能更高，但前提需要硬件GPU支持。
 ### 2.1.PixmapWidget渲染
 该组件核心是通过paintevent绘制pixmap，提供一个宏USE_OPENGL_WIDGET决定采用cpu绘制还是gpu绘制。即先通过cpu软解码生成rgb24的数据，然后通过该控件调用paintevent绘制。只不过当启用USE_OPENGL_WIDGET宏定义时，该部件继承自QOpenGLWidget，paintevent内部的绘制渲染处理会自动通过gpu加速完成。
 ```
 //传递pixmap
 void setPixmap(const QPixmap &pixmap);
 ```
-### 2.2.YuvRenderingWidget渲染
-该组件的核心是调用opengl的api接口，通过着色器实现GPU硬解码渲染。  
-该组件继承自QOpenGLWidget和QOpenGLExtraFunctions，前者是为了作为一个可视化组件，后者内部封装了opengl的api接口，用于调用完成opengl的相关操作。组件构造函数有一些必要的参数(帧格式、帧宽高)需要传递，内部基于这些参数自动完成Opengl的初始化流程与着色器的设置。关于帧格式这里借用V4L2的帧格式宏定义，便于与采集模块对应，目前内部封装了(V4L2_PIX_FMT_YUYV、V4L2_PIX_FMT_YVYU、V4L2_PIX_FMT_NV12、V4L2_PIX_FMT_NV21、V4L2_PIX_FMT_YUV420、V4L2_PIX_FMT_YVU420)六种格式的处理。兼容了yuv422、yuv420p、yuv420sp等不同格式的处理，如有新的格式需求可参考已有的代码和着色器，添加对应的解析处理即可。  
+### 2.2.OpenGLWidget渲染
+该组件的核心是通过封装的V4l2Rendering类对象调用opengl的api接口，通过着色器实现GPU硬解码渲染。  
+OpenGLWidget继承自QOpenGLWidget组件，目的是作为一个可视化组件显示渲染图像，而V4l2Rendering继承自QOpenGLExtraFunctions，内部封装了opengl的api接口，用于调用完成opengl的相关操作。组件构造函数有一些必要的参数(帧格式、帧宽高)需要传递，内部基于这些参数自动完成Opengl的初始化流程与着色器的设置。关于帧格式这里借用V4L2的帧格式宏定义，便于与采集模块对应，目前内部封装了(V4L2_PIX_FMT_YUYV、V4L2_PIX_FMT_YVYU、V4L2_PIX_FMT_NV12、V4L2_PIX_FMT_NV21、V4L2_PIX_FMT_YUV420、V4L2_PIX_FMT_YVU420)六种格式的处理。兼容了yuv422、yuv420p、yuv420sp等不同格式的处理，如有新的格式需求可参考已有的代码和着色器，添加对应的解析处理即可。  
 
-在编写该组件时遇到的坑比较多，包括但不限于OpenGL和OpenGL ES的版本在纹理采用通道格式上的区别，纹理通道绑定的调用次序，以及GLSL版本不同着色器的语法兼容性，纹理数据解包字节对齐方式对画面的影响等等，目前遇到的坑都已经填好了，细节参见代码，但可能还有些隐藏坑未被发现，但鉴于时间问题，该渲染组件暂时先告一段落，等以后有时间再来优化。
+在编写该组件时遇到的坑比较多，包括但不限于OpenGL和OpenGL ES的版本在纹理采样通道格式上的区别，纹理通道绑定的调用次序，以及GLSL版本不同着色器的语法兼容性，纹理数据解包字节对齐方式对画面的影响等等，目前遇到的坑都已经填好了，细节参见代码，但可能还有些隐藏坑未被发现，但鉴于时间问题，该渲染组件暂时先告一段落，等以后有时间再来优化。
 
 ## 参考资料
 1. [嵌入式LINUX环境下视频采集知识(V4L2)](http://blog.chinaunix.net/uid-11765716-id-2855735.html)  

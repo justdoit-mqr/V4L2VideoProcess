@@ -6,82 +6,24 @@
 ****************************************************************************/
 /*
  *@author:  缪庆瑞
- *@date:    2024.04.05
- *@brief:   直接渲染显示yuv数据的部件(基于opengl的api)
+ *@date:    2024.05.17
+ *@brief:   负责渲染处理V4L2帧数据(基于opengl的api)
  */
-#include "yuvrenderingwidget.h"
+#include "v4l2rendering.h"
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
-#include <QTimer>
-#include <QFile>
 
 /*
  *@brief:  构造函数
- *@date:   2024.04.05
+ *@date:   2024.05.17
  *@param:  pixel_format:帧格式(使用v4l2的宏)
  *@param:  pixel_width:像素宽度(需要确保为偶数)  pixel_height:像素高度
  */
-YuvRenderingWidget::YuvRenderingWidget(uint pixel_format, uint pixel_width, uint pixel_height, QWidget *parent)
-    : QOpenGLWidget(parent),pixelFormat(pixel_format),pixelWidth(pixel_width),pixelHeight(pixel_height),
+V4l2Rendering::V4l2Rendering(uint pixel_format, uint pixel_width, uint pixel_height, QObject *parent)
+    : QObject(parent),pixelFormat(pixel_format),pixelWidth(pixel_width),pixelHeight(pixel_height),
     texture1(QOpenGLTexture::Target2D),texture2(QOpenGLTexture::Target2D),texture3(QOpenGLTexture::Target2D)
 {
 
-}
-
-YuvRenderingWidget::~YuvRenderingWidget()
-{
-    makeCurrent();
-}
-/*
- *@brief:  该接口仅用于功能测试，通过读取yuv文件测试该类的渲染功能
- *注:可使用FFmpeg工具将mp4格式文件转换成yuv文件进行测试，例如“ffmpeg -i test.mp4 -an -pix_fmt nv12 -s 1024x576 nv12.yuv”
- *FFmpeg支持的格式可通过“ffmpeg -pix_fmts”列出。
- *@date:   2024.04.09
- *@param:  file:需要读取的yuv文件
- */
-void YuvRenderingWidget::readYuvFileTest(QString file)
-{
-    QFile *yuvFile = new QFile(file,this);
-    if(yuvFile->open(QIODevice::ReadOnly))
-    {
-        QTimer *readYuvFileTimer = new QTimer(this);
-        readYuvFileTimer->setInterval(40);
-        connect(readYuvFileTimer,&QTimer::timeout,this,[this,yuvFile](){
-            if(yuvFile->atEnd())
-            {
-                yuvFile->seek(0);
-            }
-            if(pixelFormat == V4L2_PIX_FMT_YUYV ||
-                    pixelFormat == V4L2_PIX_FMT_YVYU)
-            {
-                QByteArray array = yuvFile->read(pixelWidth*pixelHeight*2);
-                uchar *yuvFrame[1];
-                yuvFrame[0] = (uchar *)array.data();
-                updateYuvFrameSlot(yuvFrame);
-            }
-            else if(pixelFormat == V4L2_PIX_FMT_NV12 ||
-                    pixelFormat == V4L2_PIX_FMT_NV21)
-            {
-                QByteArray array = yuvFile->read(pixelWidth*pixelHeight*3/2);
-                uchar *yuvFrame[1];
-                yuvFrame[0] = (uchar *)array.data();
-                updateYuvFrameSlot(yuvFrame);
-            }
-            else if(pixelFormat == V4L2_PIX_FMT_YUV420 ||
-                    pixelFormat == V4L2_PIX_FMT_YVU420)
-            {
-                QByteArray array = yuvFile->read(pixelWidth*pixelHeight*3/2);
-                uchar *yuvFrame[1];
-                yuvFrame[0] = (uchar *)array.data();
-                updateYuvFrameSlot(yuvFrame);
-            }
-        });
-        readYuvFileTimer->start();
-    }
-    else
-    {
-        qDebug()<<QString("open yuv file %1 failed!").arg(file);
-    }
 }
 /*
  *@brief:  建立OpenGL的资源和状态
@@ -91,17 +33,19 @@ void YuvRenderingWidget::readYuvFileTest(QString file)
  *事件的源代码处理可知，如果设置了“QApplication::setAttribute(Qt::AA_ShareOpenGLContexts, true);”则初始化只会执行
  *一次，不过该操作意味着应用程序中不同的顶层窗口之间也能共享上下文。如果不想这么做，则可以优化initializeGL()函数内部的处理
  *使其支持多次调用，这也是目前采取的方案(关键点是在initTextures()函数中处理纹理对象的销毁和创建)。
- *@date:   2024.04.05
+ *@date:   2024.05.17
  */
-void YuvRenderingWidget::initializeGL()
+void V4l2Rendering::initializeGL()
 {
+    isInitGl = true;
+
     initializeOpenGLFunctions();//绑定QOpenGLFunctions的上下文
     glClearColor(1.0f,0.0f,0.0f,1.0f);//设置清屏颜色
     glClear(GL_COLOR_BUFFER_BIT);//清空颜色缓冲区
 
     /*0.关联上下文的销毁信号，用来销毁OpenGL纹理对象*/
     connect(QOpenGLContext::currentContext(),&QOpenGLContext::aboutToBeDestroyed,
-            this,&YuvRenderingWidget::destroyTexture,Qt::DirectConnection);
+            this,&V4l2Rendering::destroyTexture,Qt::DirectConnection);
 
     /*1.初始化VAO和VBO*/
     VAO.create();//创建顶点数组对象
@@ -120,10 +64,9 @@ void YuvRenderingWidget::initializeGL()
     };
     VBO.allocate(vertices,sizeof(vertices));//分配显存大小，并绑定顶点数据到缓存区
 
-    /*2.初始化着色器
+    /* 2.初始化着色器
      * 使用GLSL语言编写的顶点着色器和片段着色器程序，集成了部分yuv格式的转换处理。
-     * 注:OpenGL (ES) 2.0以前的版本仅支持固定管线，不支持可编程管线(GLSL着色器)，所以要确保硬件支持OpenGL 2.0及以上版本
-     */
+     * 注:OpenGL (ES) 2.0以前的版本仅支持固定管线，不支持可编程管线(GLSL着色器)，所以要确保硬件支持OpenGL 2.0及以上版本*/
     initVertexShader();
     initFragmentShader();
 
@@ -150,20 +93,18 @@ void YuvRenderingWidget::initializeGL()
 }
 /*
  *@brief:  设置OpenGL的视口、投影
- *widget大小改变时会被调用
- *@date:   2024.04.05
+ *@date:   2024.05.17
  *@param:  w:宽  h:高
  */
-void YuvRenderingWidget::resizeGL(int w, int h)
+void V4l2Rendering::resizeGL(int w, int h)
 {
     glViewport(0,0,w,h);
 }
 /*
  *@brief:  渲染OpenGL场景
- *widget更新时会被调用
- *@date:   2024.04.05
+ *@date:   2024.05.17
  */
-void YuvRenderingWidget::paintGL()
+void V4l2Rendering::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT);//防止叠图
 
@@ -179,10 +120,51 @@ void YuvRenderingWidget::paintGL()
     VAO.release();
 }
 /*
- *@brief:  初始化顶点着色器
- *@date:   2024.04.09
+ *@brief:  更新(渲染)v4l2帧数据
+ *注：此处调用QOpenGLTexture的setData时，参数PixelFormat需要与initTexture()中的format保持一致，初期使用Red、RG、RGB、RGBA，
+ *后面为了与LuminanceFormat等对应起来，改用Luminance、LuminanceAlpha、RGB、RGBA。
+ *@date:   2024.05.17
+ *@param:  v4l2FrameData:v4l2帧二维指针(指针数组)，planes根据pixelFormat格式在内部自动确定
+ *对于多平面planes每一个元素对应着一个平面(不连续)v4l2FrameData[0]即完整的yuv数据
  */
-void YuvRenderingWidget::initVertexShader()
+void V4l2Rendering::updateV4l2Frame(uchar **v4l2FrameData)
+{
+    //确保已经初始化opengl相关资源(initializeGL)，否则直接操作纹理会出错
+    if(!this->isInitGl)
+    {
+        return;
+    }
+    //one planes格式，设置两个纹理对象数据
+    if(pixelFormat == V4L2_PIX_FMT_YUYV ||
+            pixelFormat == V4L2_PIX_FMT_YVYU)
+    {
+        //纹理对象能够根据size自动读取对应字节的数据
+        texture1.setData(QOpenGLTexture::LuminanceAlpha, QOpenGLTexture::UInt8, v4l2FrameData[0],&pixelTransferOptions1);
+        texture2.setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, v4l2FrameData[0],&pixelTransferOptions2);
+    }
+    //two planes格式，设置两个纹理对象数据
+    else if(pixelFormat == V4L2_PIX_FMT_NV12 ||
+            pixelFormat == V4L2_PIX_FMT_NV21)
+    {
+        //纹理对象能够根据size自动读取对应字节的数据
+        texture1.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, v4l2FrameData[0],&pixelTransferOptions1);
+        texture2.setData(QOpenGLTexture::LuminanceAlpha, QOpenGLTexture::UInt8, v4l2FrameData[0]+pixelWidth*pixelHeight,&pixelTransferOptions2);
+    }
+    //three planes格式，设置三个纹理对象数据
+    else if(pixelFormat == V4L2_PIX_FMT_YUV420 ||
+            pixelFormat == V4L2_PIX_FMT_YVU420)
+    {
+        //纹理对象能够根据size自动读取对应字节的数据
+        texture1.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, v4l2FrameData[0],&pixelTransferOptions1);
+        texture2.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, v4l2FrameData[0]+pixelWidth*pixelHeight,&pixelTransferOptions2);
+        texture3.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, v4l2FrameData[0]+pixelWidth*pixelHeight*5/4,&pixelTransferOptions3);
+    }
+}
+/*
+ *@brief:  初始化顶点着色器
+ *@date:   2024.05.17
+ */
+void V4l2Rendering::initVertexShader()
 {
     /*顶点着色器，两个输入(顶点坐标(vec3)+纹理坐标(vec2)),其中顶点坐标转成vec4传给内置变量。
      *一个输出(纹理坐标，此处不经过处理与输入一致)传递给下一个着色器*/
@@ -229,9 +211,9 @@ void YuvRenderingWidget::initVertexShader()
 /*
  *@brief:  初始化片段着色器
  *注：此处片段着色器内部使用的yuv转rgb为BT709标准的Full range格式的转换公式，根据不同的yuv格式实现不同的处理
- *@date:   2024.04.09
+ *@date:   2024.05.17
  */
-void YuvRenderingWidget::initFragmentShader()
+void V4l2Rendering::initFragmentShader()
 {
     /*one planes格式，需要两个纹理采样器(两通道取y+四通道取uv)*/
     if(pixelFormat == V4L2_PIX_FMT_YUYV || pixelFormat == V4L2_PIX_FMT_YVYU)
@@ -385,9 +367,9 @@ void YuvRenderingWidget::initFragmentShader()
  *注:在初始化QOpenGLTexture纹理对象时，setFormat的参数很关键，之前在PC端(OpenGL)使用R8_UNorm、RG8_UNorm、RGB8_UNorm、RGBA8_UNorm
  *设置1-4通道的格式，运行没有问题。但在arm端(OpenGL es 2.0)怎么都出不来图像，经过排查确定是纹理对象的问题，好像是因为opengl es 2.0比较特殊
  *所以专门定义了一组LuminanceFormat、LuminanceAlphaFormat、RGBFormat、RGBAFormat来适配1-4通道格式，并且实测PC端也可以兼容该格式。
- *@date:   2024.04.08
+ *@date:   2024.05.17
  */
-void YuvRenderingWidget::initTexture()
+void V4l2Rendering::initTexture()
 {
     //one planes格式，需要两个纹理(Y,UV)
     if(pixelFormat == V4L2_PIX_FMT_YUYV ||
@@ -480,9 +462,9 @@ void YuvRenderingWidget::initTexture()
 /*
  *@brief:  绘制纹理(流程：绑定纹理对象(关联着色器采样器)->绘制纹理->释放绑定）
  *该函数要在paintGL()中调用，除了有必须的绘制纹理操作，还需要不断的绑定纹理单元，否则可能出现异常
- *@date:   2024.04.08
+ *@date:   2024.05.17
  */
-void YuvRenderingWidget::drawTexture()
+void V4l2Rendering::drawTexture()
 {
     //处理两个纹理对象
     if(pixelFormat == V4L2_PIX_FMT_YUYV ||
@@ -528,11 +510,10 @@ void YuvRenderingWidget::drawTexture()
  *正常情况下在析构函数中随着QOpenGLTexture对象的销毁，OpenGL纹理对象也会跟着销毁，所以不需要单独处理。但是我们的板子遇到了
  *执行两次initializeGL()的情况，且第一次初始化的上下文很快就销毁了，而在该上下文中创建的纹理对象必须通过信号去销毁，否则将导致
  *第二次初始化的上下文无法使用创建好的纹理对象，又无法销毁。
- *@date:   2024.04.17
+ *@date:   2024.05.17
  */
-void YuvRenderingWidget::destroyTexture()
+void V4l2Rendering::destroyTexture()
 {
-    makeCurrent();
     if(texture1.isCreated())
     {
        texture1.destroy();
@@ -545,48 +526,5 @@ void YuvRenderingWidget::destroyTexture()
     {
        texture3.destroy();
     }
-    doneCurrent();
 }
-/*
- *@brief:  更新(渲染)yuv帧数据
- *注：此处调用QOpenGLTexture的setData时，参数PixelFormat需要与initTexture()中的format保持一致，初期使用Red、RG、RGB、RGBA，
- *后面为了与LuminanceFormat等对应起来，改用Luminance、LuminanceAlpha、RGB、RGBA。
- *@date:   2024.04.09
- *@param:  yuvFrame[planes]:yuv帧指针数组，planes根据pixelFormat格式在内部自动确定
- *对于多平面planes每一个元素对应着一个平面(不连续)，对于单平面yuvFrame[0]即完整的yuv数据
- */
-void YuvRenderingWidget::updateYuvFrameSlot(uchar *yuvFrame[])
-{
-    //确保已经初始化opengl相关资源(initializeGL)，否则直接操作纹理会出错
-    if(!this->isVisible())
-    {
-        return;
-    }
-    //one planes格式，设置两个纹理对象数据
-    if(pixelFormat == V4L2_PIX_FMT_YUYV ||
-            pixelFormat == V4L2_PIX_FMT_YVYU)
-    {
-        //纹理对象能够根据size自动读取对应字节的数据
-        texture1.setData(QOpenGLTexture::LuminanceAlpha, QOpenGLTexture::UInt8, yuvFrame[0],&pixelTransferOptions1);
-        texture2.setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, yuvFrame[0],&pixelTransferOptions2);
-    }
-    //two planes格式，设置两个纹理对象数据
-    else if(pixelFormat == V4L2_PIX_FMT_NV12 ||
-            pixelFormat == V4L2_PIX_FMT_NV21)
-    {
-        //纹理对象能够根据size自动读取对应字节的数据
-        texture1.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0],&pixelTransferOptions1);
-        texture2.setData(QOpenGLTexture::LuminanceAlpha, QOpenGLTexture::UInt8, yuvFrame[0]+pixelWidth*pixelHeight,&pixelTransferOptions2);
-    }
-    //three planes格式，设置三个纹理对象数据
-    else if(pixelFormat == V4L2_PIX_FMT_YUV420 ||
-            pixelFormat == V4L2_PIX_FMT_YVU420)
-    {
-        //纹理对象能够根据size自动读取对应字节的数据
-        texture1.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0],&pixelTransferOptions1);
-        texture2.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0]+pixelWidth*pixelHeight,&pixelTransferOptions2);
-        texture3.setData(QOpenGLTexture::Luminance, QOpenGLTexture::UInt8, yuvFrame[0]+pixelWidth*pixelHeight*5/4,&pixelTransferOptions3);
-    }
 
-    update();
-}
