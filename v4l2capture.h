@@ -48,6 +48,7 @@ public:
 
     bool openDevice(const char *filename,bool isNonblock);//打开设备
     void closeDevice();//关闭设备
+    bool resetDevice();//重置设备
 
     /* 以下方法利用V4L2的数据结构结合ioctl()函数实现对视频设备的读写及控制
      * ioctl(int fd,unsigned long cmd,...)函数用于对设备的读取与控制(第三个参数一般涉及数据
@@ -88,6 +89,8 @@ private:
     void clearSelectResource();//清理select相关的资源
 
     /*采集设备参数*/
+    QString cameraFileName;//设备文件名
+    bool isNonblockFlag = false;//设备打开非阻塞标识
     int cameraFd = -1;//设备文件句柄
     int v4l2BufType = V4L2_BUF_TYPE_VIDEO_CAPTURE;//采集帧类型(目前主要分单plane和多plane，根据查询的v4l2_capability自动设置)
     int planes_num = 1;//平面数，针对多平面采集帧格式(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)

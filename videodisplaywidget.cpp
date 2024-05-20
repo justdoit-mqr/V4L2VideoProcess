@@ -12,8 +12,8 @@
 //采集设备对应到linux系统下的文件名
 #define VIDEO_DEVICE "/dev/video1"
 //采集帧宽高
-#define FRAME_WIDTH (854)
-#define FRAME_HEIGHT (480)
+#define FRAME_WIDTH (1280)
+#define FRAME_HEIGHT (720)
 
 VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     QWidget(parent)
@@ -168,6 +168,8 @@ void VideoDisplayWidget::captureBtnClickedSlot()
     {
         captureBtn->setText("start capture");
         v4l2Capture->ioctlSetStreamSwitch(false);
+        //有些平台驱动有问题，停止采集后需要重置设备，否则再次开启采集，画面显示会异常
+        v4l2Capture->resetDevice();
     }
 #else
     if(captureBtn->text() == "start capture")

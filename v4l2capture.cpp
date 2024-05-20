@@ -38,13 +38,8 @@ V4L2Capture::V4L2Capture(bool useSelect, QObject *parent):
  */
 V4L2Capture::~V4L2Capture()
 {
-    if(isStreamOn)
-    {
-        ioctlSetStreamSwitch(false);
-    }
-    clearSelectResource();
-    unMmapBuffers();
     closeDevice();
+    clearSelectResource();
 }
 /*
  *@brief:   打开视频采集设备
@@ -55,12 +50,21 @@ V4L2Capture::~V4L2Capture()
  */
 bool V4L2Capture::openDevice(const char *filename, bool isNonblock)
 {
+    //存在已经打开的设备，则直接返回成功
+    if(cameraFd != -1)
+    {
+        printf("The video device has been opened!\n");
+        return true;
+    }
+
     cameraFd = open(filename,O_RDWR | (isNonblock?O_NONBLOCK:0));
     if(cameraFd == -1)
     {
         printf("Cann't open video device(%s).errno=%s\n",filename,strerror(errno));
         return false;
     }
+    cameraFileName = filename;
+    isNonblockFlag = isNonblock;
     return true;
 }
 /*
@@ -69,6 +73,14 @@ bool V4L2Capture::openDevice(const char *filename, bool isNonblock)
  */
 void V4L2Capture::closeDevice()
 {
+    //停止视频帧采集
+    if(isStreamOn)
+    {
+        ioctlSetStreamSwitch(false);
+    }
+    //释放内存映射缓冲区
+    unMmapBuffers();
+    //关闭设备
     if(cameraFd != -1)
     {
         if(close(cameraFd) == -1)
@@ -77,6 +89,29 @@ void V4L2Capture::closeDevice()
         }
         cameraFd = -1;
     }
+}
+/*
+ *@brief:  重置视频采集设备(重置上一次打开的设备，先关闭设备并清理资源，然后再重新打开，并初始化帧缓冲区)
+ *注1:v4l2打开设备后设置的相关参数(设备输入，流格式参数等)，会保存到驱动中，即便是关闭设备下一次打开这些参数也不会被重置(直到断电，驱动
+ *重新加载)，但是关闭后需要重新初始化帧缓存区(申请、映射缓冲区)。
+ *注2:该接口主要是为了解决一些因为驱动问题导致帧画面异常的情况(比如我们使用的一款设备，初始化采集没有问题，但在VIDIOC_STREAMOFF停止数据
+ *流采集后再重新开启，画面就会异常)，在无法修改驱动的情况下，通过重置设备来解决问题。
+ *@date:   2024.05.18
+ *@return: bool:true=成功
+ */
+bool V4L2Capture::resetDevice()
+{
+    if(!cameraFileName.isEmpty())
+    {
+        closeDevice();
+        if(openDevice(cameraFileName.toLocal8Bit().constData(),isNonblockFlag))
+        {
+            ioctlRequestBuffers();
+            bool ret = ioctlMmapBuffers();
+            return ret;
+        }
+    }
+    return false;
 }
 /*
  *@brief:   查询设备的基本信息及驱动能力(v4l2_capability)

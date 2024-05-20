@@ -20,9 +20,9 @@
  *@param:  pixel_width:像素宽度(需要确保为偶数)  pixel_height:像素高度
  */
 OpenGLWidget::OpenGLWidget(uint pixel_format, uint pixel_width, uint pixel_height, QWidget *parent)
-    : QOpenGLWidget(parent)
+    : QOpenGLWidget(parent),v4l2Rendering(new V4l2Rendering(pixel_format,pixel_width,pixel_height))
 {
-    v4l2Rendering = new V4l2Rendering(pixel_format,pixel_width,pixel_height);
+
 }
 
 OpenGLWidget::~OpenGLWidget()
