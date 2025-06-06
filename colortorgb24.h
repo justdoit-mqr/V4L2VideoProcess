@@ -1,6 +1,6 @@
 ﻿/****************************************************************************
 *
-* Copyright (C) 2019-2024 MiaoQingrui. All rights reserved.
+* Copyright (C) 2019-2025 MiaoQingrui. All rights reserved.
 * Author: 缪庆瑞 <justdoit_mqr@163.com>
 *
 ****************************************************************************/

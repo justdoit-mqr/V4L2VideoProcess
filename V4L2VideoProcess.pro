@@ -22,7 +22,8 @@ RCC_DIR = ./build
 #DESTDIR = ./libs
 #CONFIG += staticlib
 #QMAKE_POST_LINK += cp v4l2capture.h ./libs/
-#QMAKE_POST_LINK += cp yuvrenderingwidget.h ./libs/
+#QMAKE_POST_LINK += cp v4l2rendering.h ./libs/
+#QMAKE_POST_LINK += cp colortorgb24.h ./libs/
 
 SOURCES += v4l2capture.cpp \
     colortorgb24.cpp \
