@@ -8,6 +8,15 @@
  *@author:  缪庆瑞
  *@date:    2024.05.17
  *@brief:   继承自QOpenGLWidget，使用openglapi渲染显示
+ *下面列举部分硬件平台查看GPU的使用情况的方法，方便分析。
+ *全志T3:
+ *mount -t debugfs debugfs /sys/kernel/debug/
+ *cat /sys/kernel/debug/mali/gpu_memory   查看GPU内存使用情况
+ *cat /sys/kernel/debug/mali/utilization_gp    查看GPU核心负载率
+ *cat /sys/kernel/debug/mali/utilization_gp_pp    查看GPU核心+着色器负载率
+ *瑞芯微RK3568:
+ *mount -t debugfs debugfs /sys/kernel/debug
+ *cat /sys/devices/platform/fde60000.gpu/utilisation  查看GPU核心负载率
  */
 #ifndef OPENGLWIDGET_H
 #define OPENGLWIDGET_H
@@ -20,9 +29,14 @@ class OpenGLWidget : public QOpenGLWidget
     Q_OBJECT
 public:
     explicit OpenGLWidget(uint pixel_format,uint pixel_width,
-                                uint pixel_height,QWidget *parent = nullptr);
+                                uint pixel_height,bool is_tv_range=true,QWidget *parent = nullptr);
     ~OpenGLWidget();
 
+    //设置镜像参数
+    void setMirrorParam(const bool &hMirror,const bool &vMirror);
+    //设置颜色调整参数
+    void setColorAdjustParam(const bool &enableColorAdjust,const float &brightness,
+                             const float &contrast,const float &saturation);
     //该接口仅用于功能测试，通过读取yuv文件测试该类的渲染功能
     void readYuvFileTest(QString file,uint pixelFormat,
                          uint pixelWidth,uint pixelHeight);

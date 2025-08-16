@@ -57,12 +57,21 @@ bool V4L2Capture::openDevice(const char *filename, bool isNonblock)
         return true;
     }
 
+    //打开设备
     cameraFd = open(filename,O_RDWR | (isNonblock?O_NONBLOCK:0));
     if(cameraFd == -1)
     {
         printf("Cann't open video device(%s).errno=%s\n",filename,strerror(errno));
         return false;
     }
+    //判断设备是否具备视频采集的能力
+    if(!ioctlQueryCapability())
+    {
+        close(cameraFd);
+        cameraFd = -1;
+        return false;
+    }
+
     cameraFileName = filename;
     isNonblockFlag = isNonblock;
     return true;
@@ -92,9 +101,7 @@ void V4L2Capture::closeDevice()
 }
 /*
  *@brief:  重置视频采集设备(重置上一次打开的设备，先关闭设备并清理资源，然后再重新打开，并初始化帧缓冲区)
- *注1:v4l2打开设备后设置的相关参数(设备输入，流格式参数等)，会保存到驱动中，即便是关闭设备下一次打开这些参数也不会被重置(直到断电，驱动
- *重新加载)，但是关闭后需要重新初始化帧缓存区(申请、映射缓冲区)。
- *注2:该接口主要是为了解决一些因为驱动问题导致帧画面异常的情况(比如我们使用的一款设备，初始化采集没有问题，但在VIDIOC_STREAMOFF停止数据
+ *注:该接口主要是为了解决一些因为驱动问题导致帧画面异常的情况(比如我们使用的一款设备，初始化采集没有问题，但在VIDIOC_STREAMOFF停止数据
  *流采集后再重新开启，画面就会异常)，在无法修改驱动的情况下，通过重置设备来解决问题。
  *@date:   2024.05.18
  *@return: bool:true=成功
@@ -106,162 +113,25 @@ bool V4L2Capture::resetDevice()
         closeDevice();
         if(openDevice(cameraFileName.toLocal8Bit().constData(),isNonblockFlag))
         {
-            ioctlRequestBuffers();
-            bool ret = ioctlMmapBuffers();
+            ioctlSetStreamFmt(pixelFormat,pixelWidth,pixelHeight);
+            bool ret = ioctlRequestMmapBuffers();
             return ret;
         }
     }
     return false;
 }
 /*
- *@brief:   查询设备的基本信息及驱动能力(v4l2_capability)
- * 通常对于一个摄像设备，它的驱动能力一般仅支持视频采集(V4L2_CAP_VIDEO_CAPTURE(单平面)或V4L2_CAP_VIDEO_CAPTURE_MPLANE(多平面))
- * 和ioctl控制(V4L2_CAP_STREAMING)，有些还支持通过系统调用进行读写(V4L2_CAP_READWRITE）
- *@date:    2019.08.07
- *@update:  2024.03.06
+ *@brief:  打印设备信息，用于调试使用
+ *@date:   2025.08.16
  */
-void V4L2Capture::ioctlQueryCapability()
+void V4L2Capture::printDeviceInfo()
 {
-    /*struct v4l2_capability{
-        u8 driver[16]; //驱动名字
-        u8 card[32]; //设备名字
-        u8 bus_info[32]; //设备在系统中的位置
-        u32 version; //驱动版本号
-        //设备支持的操作，由V4L2_CAP_*宏(在videodev2.h中)对应表示
-        u32 capabilities;
-        u32 reserved[4]; //保留字段
-    };*/
-    v4l2_capability capa;
-    ioctl(cameraFd,VIDIOC_QUERYCAP,&capa);
-    //优先使用单平面帧格式采集
-    if(capa.capabilities & V4L2_CAP_VIDEO_CAPTURE)
-    {
-        v4l2BufType = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    }
-    //V4L2多平面API是为了满足一些设备的特殊要求(帧数据存储在不连续的缓冲区)
-    else if(capa.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE)
-    {
-        v4l2BufType = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-    }
-    else
-    {
-        printf("The V4L2 device does not have the ability to capture videos!!!");
-    }
-    printf("\nBasic Information:\n"
-           "driver=%s\tcard=%s\t"
-           "bus_info=%s\tversion=%d\tcapabilities=%x\n",
-           capa.driver,capa.card,capa.bus_info,capa.version,capa.capabilities);
-}
-/*
- *@brief:   查询设备支持的模拟视频标准(v4l2_std_id)，比如PAL/NTSC等
- *@date:    2019.08.07
- */
-void V4L2Capture::ioctlQueryStd()
-{
-    v4l2_std_id std;//由V4L2_STD_*宏表示
-    ioctl(cameraFd, VIDIOC_QUERYSTD, &std);
-    printf("\nAnalog  video standard:%llx\n",std);
-}
-/*
- *@brief:   查询设备支持的输入(v4l2_input)
- *@date:    2020.08.15
- */
-void V4L2Capture::ioctlEnumInput()
-{
-    /*struct v4l2_input {
-        __u32	     index;		//要查询的输入序号，从0开始，应用程序设置
-        __u8	     name[32];	//输入名称
-        __u32	     type;		//输入类型(摄像机或收音机)
-        __u32	     audioset;  //音频相关
-        __u32        tuner;     //收音机类型
-        v4l2_std_id  std;       //模拟信号标准
-        __u32	     status;
-        __u32	     capabilities;
-        __u32	     reserved[3];
-    };*/
-    struct v4l2_input input;
-    input.index = 0;
-    printf("\nSupport Input:\n");
-    while(ioctl(cameraFd,VIDIOC_ENUMINPUT,&input) != -1)
-    {
-        printf("input type=%d\tinput name=%s\tinput std=%llx\n",
-               input.type,input.name,input.std);
-        input.index++;
-    }
-}
-/*
- *@brief:   查询设备支持的帧格式(v4l2_fmtdesc)以及对应格式的分辨率(v4l2_frmsizeenum)
- *注意:这里查的是驱动底层对采集帧支持的帧格式和分辨率,但具体能不能用还跟接的摄像头有关,使用摄像头设备不支持的帧格式或分辨率将
- *导致驱动无法采集到数据帧,应用层无法从输出对列取缓冲帧。
- *@date:    2020.08.15
- *@update:  2024.03.06
- */
-void V4L2Capture::ioctlEnumFmt()
-{
-    /*struct v4l2_fmtdesc{
-        u32 index; //要查询的格式序号，应用程序设置
-        u32 v4l2_buf_type type; // 帧类型(enum v4l2_buf_type)，应用程序设置
-        u32 flags; // 是否为压缩格式
-        u8 description[32]; // 格式名称
-        u32 pixelformat; //fourcc格式
-        u32 reserved[4]; // 保留
-    }*/
-    v4l2_fmtdesc fmtdesc;
-    fmtdesc.index = 0;
-    fmtdesc.type = v4l2BufType;
-    printf("\nSupport Format:\n");
-    /*显示所有支持的视频采集帧格式*/
-    while(ioctl(cameraFd,VIDIOC_ENUM_FMT,&fmtdesc) != -1)
-    {
-        printf("flags=%d\tdescription=%s\t"
-               "pixelformat=%c%c%c%c\n",
-               fmtdesc.flags,fmtdesc.description,
-               fmtdesc.pixelformat&0xFF,(fmtdesc.pixelformat>>8)&0xFF,
-               (fmtdesc.pixelformat>>16)&0xFF,(fmtdesc.pixelformat>>24)&0xFF);
-        /*显示对应采集帧格式所支持的分辨率*/
-        /*struct v4l2_frmsizeenum {
-            u32 index;	//要查询的帧分辨率序号
-            u32 pixel_format;	//fourcc格式
-            u32 type;		//设备支持的帧分辨率类型(1离散 2连续 3逐步  0默认分离)
-            union {	//帧分辨率
-                struct v4l2_frmsize_discrete	discrete;//分离的
-                struct v4l2_frmsize_stepwise	stepwise;//逐步的
-            };
-            u32  reserved[2];	//保留
-        };*/
-        v4l2_frmsizeenum frmsize;
-        frmsize.pixel_format = fmtdesc.pixelformat;
-        frmsize.index = 0;
-        while(ioctl(cameraFd,VIDIOC_ENUM_FRAMESIZES,&frmsize) != -1)
-        {
-            //支持连续的分辨率(在最小和最大分辨率之间可以任意设置，调节步长为1)
-            if(frmsize.type == V4L2_FRMSIZE_TYPE_CONTINUOUS)
-            {
-                printf("\tCONTINUOUS\tmin framesize=%dx%d\tmax framesize=%dx%d\n",
-                       frmsize.stepwise.min_width,frmsize.stepwise.min_height,
-                       frmsize.stepwise.max_width,frmsize.stepwise.max_height);
-                break;
-            }
-            //支持逐步的分辨率(在最小和最大分辨率之间可以按照规定得步长调节设置)
-            else if(frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE)
-            {
-                printf("\tSTEPWISE\tmin framesize=%dx%d\tmax framesize=%dx%d\tstepsize=%dx%d\n",
-                       frmsize.stepwise.min_width,frmsize.stepwise.min_height,
-                       frmsize.stepwise.max_width,frmsize.stepwise.max_height,
-                       frmsize.stepwise.step_width,frmsize.stepwise.step_height);
-                break;
-            }
-            //按照离散的分辨率(固定几个分辨率)处理，正常情况type应该为V4L2_FRMSIZE_TYPE_DISCRETE，但有些驱动默认是0
-            else
-            {
-                printf("\tDISCRETE\tframesize=%dx%d\n",
-                       frmsize.discrete.width,
-                       frmsize.discrete.height);
-                frmsize.index++;
-            }
-        }
-        fmtdesc.index++;
-    }
+    ioctlQueryStd();//查询设备支持的模拟视频标准
+    ioctlEnumInput();//查询设备支持的输入
+    ioctlEnumFmt();//查询设备支持的帧格式和分辨率
+    //下面两个在对应的设置函数中会被调用，这里就可以不调用了
+    //ioctlGetStreamParm();//获取视频流参数
+    //ioctlGetStreamFmt();//获取视频流格式
 }
 /*
  *@brief:  设置当前输入
@@ -275,48 +145,16 @@ void V4L2Capture::ioctlSetInput(int inputIndex)
     input.index = inputIndex;
     ioctl(cameraFd, VIDIOC_S_INPUT, &input);
 }
-/*
- *@brief:  获取视频流参数(v4l2_streamparm)，主要是视频采集流支持的模式以及当前模式和帧率
- *@date:   2022.08.13
- *@update: 2024.03.06
- */
-void V4L2Capture::ioctlGetStreamParm()
-{
-    /*struct v4l2_streamparm {
-        __u32	 type;  //帧类型(enum v4l2_buf_type)，应用程序设置
-        union {
-            struct v4l2_captureparm	capture;//采集参数
-            struct v4l2_outputparm	output;//输出参数
-            __u8	raw_data[200];  //用户定义
-        } parm;
-    };*/
-    /*struct v4l2_captureparm {//采集参数
-        __u32		   capability;	  //支持的模式(0x1表示支持高质量图片采集，0x1000表示支持帧率)
-        __u32		   capturemode;	  //当前模式(不支持上面的两种模式，则为0)
-        struct v4l2_fract  timeperframe;  //采集帧率
-        __u32		   extendedmode;      //驱动特定的扩展模式
-        __u32          readbuffers;       //of buffers for read
-        __u32		   reserved[4];
-    };*/
-    v4l2_streamparm streamparm;
-    memset(&streamparm,0,sizeof(streamparm));
-    streamparm.type = v4l2BufType;
-    ioctl(cameraFd,VIDIOC_G_PARM,&streamparm);
-    printf("\nCurrent Capture Streamparm:\n"
-           "Capture capability:%x\tCapture mode:%x\tFrame Rate:%d/%d\n",
-           streamparm.parm.capture.capability,
-           streamparm.parm.capture.capturemode,
-           streamparm.parm.capture.timeperframe.numerator,
-           streamparm.parm.capture.timeperframe.denominator);
-}
+
 /*
  *@brief:   设置视频流参数(v4l2_streamparm),这里主要是设置视频输入(采集)流的采集模式和帧率
  * 注:该操作在一些平台调用时相对比较费时,但如果不设置的话,可能无法采集正常的图像，比如我们使用的ov9650模块
  *@date:    2022.8.13
  *@update:  2024.03.06
- *@param:   captureMode:采集模式，跟底层驱动强相关，V4L2默认提供了一个V4L2_MODE_HIGHQUALITY模式，但驱动具体怎么实现
- *并没有规定，而且底层驱动也可以自定义其他模式实现特别的处理，这里应用层调用传递沟通好的模式即可
- *@param:   timeperframe_n:帧率(即每秒的帧数，前提是支持采集帧率模式，不支持则设置无效)
+ *@param:   captureMode:采集模式，跟底层驱动强相关，V4L2默认提供了V4L2_MODE_HIGHQUALITY和
+ *          V4L2_CAP_TIMEPERFRAME模式，但驱动具体怎么实现并没有规定，而且底层驱动也可以自定义其他模式实现特别的处理，
+ *          这里应用层调用传递沟通好的模式即可
+ *@param:   timeperframe_n:帧率(即每秒的帧数，前提是支持设置采集帧率模式，不支持则设置无效)
  */
 void V4L2Capture::ioctlSetStreamParm(uint captureMode, uint timeperframe)
 {
@@ -328,87 +166,12 @@ void V4L2Capture::ioctlSetStreamParm(uint captureMode, uint timeperframe)
      * 关系)，硬件会根据期望值返回最接近的实际支持的设置值*/
     streamparm.parm.capture.timeperframe.numerator = 1;
     streamparm.parm.capture.timeperframe.denominator = timeperframe;
-    ioctl(cameraFd, VIDIOC_S_PARM, &streamparm);
-}
-/*
- *@brief:  获取视频流格式(v4l2_format)，这里主要是视频采集流的帧格式(v4l2_pix_format和v4l2_pix_format_mplane)
- *@date:   2022.08.13
- *@update: 2024.03.06
- */
-void V4L2Capture::ioctlGetStreamFmt()
-{
-    /*struct v4l2_format {
-        __u32	 type;//帧类型(enum v4l2_buf_type)，应用程序设置,该类型决定了下面的union使用哪一个
-        union {
-            struct v4l2_pix_format		pix;     //V4L2_BUF_TYPE_VIDEO_CAPTURE
-            struct v4l2_pix_format_mplane	pix_mp;  //V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE
-            struct v4l2_window		win;     //V4L2_BUF_TYPE_VIDEO_OVERLAY
-            struct v4l2_vbi_format		vbi;     //V4L2_BUF_TYPE_VBI_CAPTURE
-            struct v4l2_sliced_vbi_format	sliced;  //V4L2_BUF_TYPE_SLICED_VBI_CAPTURE
-            struct v4l2_sdr_format		sdr;     //V4L2_BUF_TYPE_SDR_CAPTURE
-            __u8	raw_data[200];               //user-defined
-        } fmt;
-    };*/
-    /*struct v4l2_pix_format {//视频采集帧格式
-        __u32           width;//宽
-        __u32			height;//高
-        __u32			pixelformat;//帧格式
-        __u32			field;		//场格式(enum v4l2_field)
-        __u32           bytesperline; //一行像素的字节数 for padding, zero if unused
-        __u32          	sizeimage;//图像大小
-        __u32			colorspace;	//颜色空间(enum v4l2_colorspace)
-        ......
-    };*/
-    /*struct v4l2_pix_format_mplane {//多平面视频采集帧格式
-        __u32				width;//宽
-        __u32				height;//高
-        __u32				pixelformat;//帧格式
-        __u32				field;//场格式(enum v4l2_field)
-        __u32				colorspace;//颜色空间(enum v4l2_colorspace)
-
-        struct v4l2_plane_pix_format	plane_fmt[VIDEO_MAX_PLANES];//每一个平面得帧格式
-        __u8				num_planes;//平面数量
-        __u8				flags;
-         union {
-            __u8				ycbcr_enc;
-            __u8				hsv_enc;
-        };
-        __u8				quantization;
-        __u8				xfer_func;
-        __u8				reserved[7];
-    };*/
-
-    v4l2_format format;
-    memset(&format,0,sizeof(format));
-    format.type = v4l2BufType;
-    ioctl(cameraFd,VIDIOC_G_FMT,&format);
-    if(v4l2BufType == V4L2_BUF_TYPE_VIDEO_CAPTURE)
+    if(ioctl(cameraFd, VIDIOC_S_PARM, &streamparm) == -1)
     {
-        printf("\nCurrent Plane pixformat:\n"
-               "pix size:%dx%d\t pixelformat:%c%c%c%c\n"
-               "field:%d\t bytesperline:%d\t sizeimage:%d\t colorspace:%d\n",
-               format.fmt.pix.width,format.fmt.pix.height,
-               format.fmt.pix.pixelformat&0xFF,(format.fmt.pix.pixelformat>>8)&0xFF,
-               (format.fmt.pix.pixelformat>>16)&0xFF,(format.fmt.pix.pixelformat>>24)&0xFF,
-               format.fmt.pix.field,format.fmt.pix.bytesperline,format.fmt.pix.sizeimage,format.fmt.pix.colorspace);
+        printf("VIDIOC_S_PARM failed.\n");
     }
-    else if(v4l2BufType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
-    {
-        printf("\nCurrent Mplane pixformat:\n"
-               "pix size:%dx%d\t pixelformat:%c%c%c%c\n"
-               "field:%d\t colorspace:%d\n"
-               "num_planes:%d\n",
-               format.fmt.pix_mp.width,format.fmt.pix_mp.height,
-               format.fmt.pix_mp.pixelformat&0xFF,(format.fmt.pix_mp.pixelformat>>8)&0xFF,
-               (format.fmt.pix_mp.pixelformat>>16)&0xFF,(format.fmt.pix_mp.pixelformat>>24)&0xFF,
-               format.fmt.pix_mp.field,format.fmt.pix_mp.colorspace,format.fmt.pix_mp.num_planes);
-        //注:在T517上实测每个平面的信息在VIDIOC_REQBUFS之后才被填充,否则拿到的将是初始化值(0)或者上次设置的值
-        for(int i=0;i<format.fmt.pix_mp.num_planes;i++)
-        {
-            printf("\tbytesperline:%d\t sizeimage:%d\n",format.fmt.pix_mp.plane_fmt[i].bytesperline,
-                   format.fmt.pix_mp.plane_fmt[i].sizeimage);
-        }
-    }
+    //设置完成后自动查询一遍
+    ioctlGetStreamParm();
 }
 /*
  *@brief:   设置视频流格式(v4l2_streamparm)，这里主要是视频输入(采集)流的格式
@@ -440,11 +203,10 @@ void V4L2Capture::ioctlSetStreamFmt(uint pixelformat, uint width, uint height)
         format.fmt.pix_mp.plane_fmt[0].bytesperline = width;
         format.fmt.pix_mp.plane_fmt[0].sizeimage = width*height*3/2;*/
         //设置格式
-        ioctl(cameraFd,VIDIOC_S_FMT,&format);
-        //获取格式(目的是为了获取该格式多平面的数量)
-        ioctl(cameraFd,VIDIOC_G_FMT,&format);
-        this->planes_num = format.fmt.pix_mp.num_planes;
-        printf("\nCurrent Mplane pixformat:\nnum_planes:%d\n",this->planes_num);
+        if(ioctl(cameraFd,VIDIOC_S_FMT,&format) == -1)
+        {
+            printf("VIDIOC_S_FMT failed.\n");
+        }
     }
     else//2.单平面
     {
@@ -454,41 +216,39 @@ void V4L2Capture::ioctlSetStreamFmt(uint pixelformat, uint width, uint height)
         format.fmt.pix.pixelformat = pixelformat;
         format.fmt.pix.field = V4L2_FIELD_ANY;//帧域
         //设置格式
-        ioctl(cameraFd,VIDIOC_S_FMT,&format);
+        if(ioctl(cameraFd,VIDIOC_S_FMT,&format) == -1)
+        {
+            printf("VIDIOC_S_FMT failed.\n");
+        }
     }
     //记录当前设置
     pixelFormat = pixelformat;
     pixelWidth = width;
     pixelHeight = height;
+    //设置完成后自动查询一遍
+    ioctlGetStreamFmt();
 }
 /*
- *@brief:   申请视频帧缓冲区(v4l2_requestbuffers)，缓冲区在内核空间
+ *@brief:   申请并映射视频帧缓冲区(v4l2_buffer)到用户空间内存,便于用户直接访问处理缓冲区的数据
  *@date:    2019.08.07
- *@update:  2024.03.06
+ *@update:  2025.08.16
+ *@return:  bool:true=申请并映射成功  false=申请映射失败
  */
-void V4L2Capture::ioctlRequestBuffers()
+bool V4L2Capture::ioctlRequestMmapBuffers()
 {
-    /*struct v4l2_requestbuffers{
-        u32 count; // 缓冲队列里帧的数目，不宜过多
-        enum v4l2_buf_type type; //帧类型
-        enum v4l2_memory memory; // 用户程序与设备交换数据的方式
-        u32 reserved[2];
-    };*/
+    /*1.申请视频帧缓冲区，缓冲区在内核空间*/
     v4l2_requestbuffers reqbufs;
     memset(&reqbufs,0,sizeof(reqbufs));
-    reqbufs.count = BUFFER_COUNT;//缓冲帧数目
-    reqbufs.type = v4l2BufType;//采集帧
-    reqbufs.memory = V4L2_MEMORY_MMAP;//内存映射方式，省却数据拷贝的时间
-    ioctl(cameraFd,VIDIOC_REQBUFS,&reqbufs);//申请视频缓冲区
-}
-/*
- *@brief:   映射视频帧缓冲区(v4l2_buffer)到用户空间内存,便于用户直接访问处理缓冲区的数据
- *@date:    2019.08.07
- *@update:  2024.03.06
- *@return:  bool:true=映射成功  false=映射失败
- */
-bool V4L2Capture::ioctlMmapBuffers()
-{
+    reqbufs.count = BUFFER_COUNT;//缓冲队列里帧数目,不宜过多
+    reqbufs.type = v4l2BufType;//帧类型，采集帧
+    reqbufs.memory = V4L2_MEMORY_MMAP;//用户程序与设备交换数据的方式，这里选择内存映射方式，省却数据拷贝的时间
+    if(ioctl(cameraFd,VIDIOC_REQBUFS,&reqbufs) == -1)//申请视频缓冲区
+    {
+        printf("VIDIOC_REQBUFS failed.\n");
+        return false;
+    }
+
+    /*2.映射视频帧缓冲区(v4l2_buffer)到用户内存空间*/
     v4l2_buffer vbuffer;//视频缓冲帧
     for(int i = 0;i<BUFFER_COUNT;i++)
     {
@@ -551,8 +311,26 @@ void V4L2Capture::ioctlSetStreamSwitch(bool on)
 
     if(on)
     {
-        //启动采集数据流，采集之前需要确保输入队列已放满
-        ioctlQueueBuffers();
+        /*启动之前需要先放缓冲帧进输入队列
+         *驱动将采集到的一帧数据存入该队列的缓冲区，存完后会自动将该帧缓冲区移至采集输出队列。*/
+        v4l2_buffer vbuffer;
+        for(int i = 0;i < BUFFER_COUNT;i++)
+        {
+            memset(&vbuffer,0,sizeof(vbuffer));
+            vbuffer.index = i;
+            vbuffer.type = v4l2BufType;
+            vbuffer.memory = V4L2_MEMORY_MMAP;
+            if(v4l2BufType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
+            {
+                struct v4l2_plane m_planes[this->planes_num];
+                memset(m_planes,0,sizeof(v4l2_plane)*this->planes_num);
+
+                vbuffer.length = this->planes_num;
+                vbuffer.m.planes = m_planes;
+            }
+            ioctl(cameraFd,VIDIOC_QBUF,&vbuffer);//缓冲帧放入视频输入队列 FIFO
+        }
+        //启动采集
         ioctl(cameraFd,VIDIOC_STREAMON,&type);
     }
     else
@@ -563,9 +341,10 @@ void V4L2Capture::ioctlSetStreamSwitch(bool on)
 }
 /*
  *@brief:   从输出队列取缓冲帧，转换成rgb24格式的帧
- *注:该函数将内核输出队列的缓冲帧，取出到用户空间并进行格式转换处理，可以认为是软件应用层捕获视频帧显示的最核心处理。
- *需要确保该函数调用处理的时间要快于设备采集帧率，假如帧率是25,那么要保证至少在每40ms以内就得调用该函数处理一次，
- *这也要求该函数内部的处理要尽可能的高效，否则视频帧在界面刷新时就可能显示异常(图像闪烁，旧帧不更新等等)。
+ *注:该函数将内核输出队列的缓冲帧，取出到用户空间(如果需要软解码，则在该函数内部进行格式转换处理)，可以认为是软件
+ *应用层捕获视频帧显示的最核心处理。需要确保该函数调用处理的时间要快于设备采集帧率，假如帧率是25,那么要保证至少在
+ *每40ms以内就得调用该函数处理一次，这也要求该函数内部的处理要尽可能的高效(尤其针对软解码处理)，否则视频帧在界面
+ *刷新时就可能显示异常(图像闪烁，旧帧不更新等等)。
  *@date:    2019.08.07
  *@update:  2024.03.07
  *@param:   rgb24FrameAddr:rgb24格式(rgb888)帧的内存地址,该地址的内存空间必须在方法外申请,
@@ -589,7 +368,7 @@ bool V4L2Capture::ioctlDequeueBuffers(uchar *rgb24FrameAddr, uchar *originFrameA
     //从视频输出队列取出一个缓冲帧
     if(ioctl(cameraFd,VIDIOC_DQBUF,&vbuffer) == -1)
     {
-        printf("Dequeue buffers failed.\n");
+        printf("VIDIOC_DQBUF failed.\n");
         return false;
     }
     /*根据帧格式和v4l2BufType调用对应得转换处理*/
@@ -634,36 +413,194 @@ bool V4L2Capture::ioctlDequeueBuffers(uchar *rgb24FrameAddr, uchar *originFrameA
             ColorToRgb24::rgb4_to_rgb24(rgb32FrameAddr,rgb24FrameAddr,pixelWidth,pixelHeight);
         }
     }
-
     //将取出的缓冲帧重新放回输入队列，实现循环采集数据
     ioctl(cameraFd,VIDIOC_QBUF,&vbuffer);
 
     return true;
 }
 /*
- *@brief:   放缓冲帧进输入队列,驱动将采集到的一帧数据存入该队列的缓冲区，存完后会自动将该帧缓冲区移至采集输出队列。
- *注：该操作在启动采集之前会被自动调用(封装到了ioctlSetStreamSwitch函数内)，确保采集时输入队列正确,
- *所以就无需在外部手动调用了。
+ *@brief:   查询设备的基本信息及驱动能力(v4l2_capability)
+ * 通常对于一个摄像设备，它的驱动能力一般仅支持视频采集(V4L2_CAP_VIDEO_CAPTURE(单平面)或V4L2_CAP_VIDEO_CAPTURE_MPLANE(多平面))
+ * 和ioctl控制(V4L2_CAP_STREAMING)。有些还支持通过系统调用(read/write)进行读写(V4L2_CAP_READWRITE),该方式编程模型简单，但因为
+ * 涉及到内核空间到用户空间的数据拷贝，以及频繁的系统调用增加cpu开销，性能较低，所以这里不考虑该方式，默认使用MMAP方式。
+ *@date:    2019.08.07
+ *@update:  2025.08.16
+ *@return:  bool:true=表示设备支持该类的采集处理操作   false=不支持
+ */
+bool V4L2Capture::ioctlQueryCapability()
+{
+    v4l2_capability capa;
+    ioctl(cameraFd,VIDIOC_QUERYCAP,&capa);
+    printf("\nV4L2 Basic Information:\n"
+           "driver_name=%s\tcard_name=%s\t"
+           "bus_info=%s\tversion=%d\tcapabilities=0x%x\n",
+           capa.driver,capa.card,capa.bus_info,capa.version,capa.capabilities);
+    //优先使用单平面帧格式采集
+    if(capa.capabilities & V4L2_CAP_VIDEO_CAPTURE)
+    {
+        v4l2BufType = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    }
+    //V4L2多平面API是为了满足一些设备的特殊要求(帧数据存储在不连续的缓冲区)
+    else if(capa.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE)
+    {
+        v4l2BufType = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    }
+    else
+    {
+        printf("The V4L2 device does not have the ability to capture videos!!!");
+        return false;
+    }
+    return true;
+}
+/*
+ *@brief:   查询设备支持的模拟视频标准(v4l2_std_id)，比如PAL/NTSC等
  *@date:    2019.08.07
  */
-void V4L2Capture::ioctlQueueBuffers()
+void V4L2Capture::ioctlQueryStd()
 {
-    v4l2_buffer vbuffer;
-    for(int i = 0;i < BUFFER_COUNT;i++)
-    {
-        memset(&vbuffer,0,sizeof(vbuffer));
-        vbuffer.index = i;
-        vbuffer.type = v4l2BufType;
-        vbuffer.memory = V4L2_MEMORY_MMAP;
-        if(v4l2BufType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
-        {
-            struct v4l2_plane m_planes[this->planes_num];
-            memset(m_planes,0,sizeof(v4l2_plane)*this->planes_num);
+    v4l2_std_id std;//由V4L2_STD_*宏表示
+    ioctl(cameraFd, VIDIOC_QUERYSTD, &std);
+    printf("\nV4L2 Analog  video standard:0x%llx\n",std);
+}
+/*
+ *@brief:   查询设备支持的输入(v4l2_input)
+ *@date:    2020.08.15
+ */
+void V4L2Capture::ioctlEnumInput()
+{
+    struct v4l2_input input;
+    input.index = 0;//要查询的输入序号，从0开始
 
-            vbuffer.length = this->planes_num;
-            vbuffer.m.planes = m_planes;
+    printf("\nV4L2 Support Input:\n");
+    while(ioctl(cameraFd,VIDIOC_ENUMINPUT,&input) != -1)
+    {
+        //input.type  1=收音机  2=摄像机
+        printf("index=%d\tinput type=%d\tinput name=%s\tinput std=%llx\n",
+               input.index,input.type,input.name,input.std);
+        input.index++;
+    }
+}
+/*
+ *@brief:   查询设备支持的帧格式(v4l2_fmtdesc)以及对应格式的分辨率(v4l2_frmsizeenum)
+ *注意:这里查的是驱动底层对采集帧支持的帧格式和分辨率,但具体能不能用还跟接的摄像头有关,使用摄像头设备不支持的帧格式或分辨率将
+ *导致驱动无法采集到数据帧,应用层无法从输出对列取缓冲帧。
+ *@date:    2020.08.15
+ *@update:  2024.03.06
+ */
+void V4L2Capture::ioctlEnumFmt()
+{
+    v4l2_fmtdesc fmtdesc;
+    fmtdesc.index = 0;//要查询的格式序号
+    fmtdesc.type = v4l2BufType;//帧类型(enum v4l2_buf_type)
+
+    printf("\nV4L2 Support Format:\n");
+    /*显示所有支持的视频采集帧格式*/
+    while(ioctl(cameraFd,VIDIOC_ENUM_FMT,&fmtdesc) != -1)
+    {
+        /* flags 0表示原生格式
+         * 1(V4L2_FMT_FLAG_COMPRESSED)表示压缩格式，需要解码器
+         * 2(V4L2_FMT_FLAG_EMULATED)表示软件模拟格式，性能差*/
+        printf("flags=%d\tdescription=%s\t"
+               "pixelformat=%c%c%c%c\n",
+               fmtdesc.flags,fmtdesc.description,
+               fmtdesc.pixelformat&0xFF,(fmtdesc.pixelformat>>8)&0xFF,
+               (fmtdesc.pixelformat>>16)&0xFF,(fmtdesc.pixelformat>>24)&0xFF);
+        /*显示对应采集帧格式所支持的分辨率*/
+        v4l2_frmsizeenum frmsize;
+        frmsize.pixel_format = fmtdesc.pixelformat;//fourcc格式
+        frmsize.index = 0;//要查询的帧分辨率序号
+        while(ioctl(cameraFd,VIDIOC_ENUM_FRAMESIZES,&frmsize) != -1)
+        {
+            //frmsize.type:设备支持的帧分辨率类型(1离散 2连续 3逐步  0默认离散)
+            //支持连续的分辨率(在最小和最大分辨率之间可以任意设置，调节步长为1)
+            if(frmsize.type == V4L2_FRMSIZE_TYPE_CONTINUOUS)
+            {
+                printf("\tCONTINUOUS\tmin framesize=%dx%d\tmax framesize=%dx%d\n",
+                       frmsize.stepwise.min_width,frmsize.stepwise.min_height,
+                       frmsize.stepwise.max_width,frmsize.stepwise.max_height);
+                break;
+            }
+            //支持逐步的分辨率(在最小和最大分辨率之间可以按照规定得步长调节设置)
+            else if(frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE)
+            {
+                printf("\tSTEPWISE\tmin framesize=%dx%d\tmax framesize=%dx%d\tstepsize=%dx%d\n",
+                       frmsize.stepwise.min_width,frmsize.stepwise.min_height,
+                       frmsize.stepwise.max_width,frmsize.stepwise.max_height,
+                       frmsize.stepwise.step_width,frmsize.stepwise.step_height);
+                break;
+            }
+            //按照离散的分辨率(固定几个分辨率)处理，正常情况type应该为V4L2_FRMSIZE_TYPE_DISCRETE，但有些驱动默认是0
+            else
+            {
+                printf("\tDISCRETE\tframesize=%dx%d\n",frmsize.discrete.width,frmsize.discrete.height);
+                frmsize.index++;
+            }
         }
-        ioctl(cameraFd,VIDIOC_QBUF,&vbuffer);//缓冲帧放入视频输入队列 FIFO
+        fmtdesc.index++;
+    }
+}
+/*
+ *@brief:  获取视频流参数(v4l2_streamparm)，主要是视频采集流支持的模式以及当前模式和帧率
+ *@date:   2022.08.13
+ *@update: 2024.03.06
+ */
+void V4L2Capture::ioctlGetStreamParm()
+{
+    v4l2_streamparm streamparm;
+    memset(&streamparm,0,sizeof(streamparm));
+    streamparm.type = v4l2BufType;//帧类型(enum v4l2_buf_type)
+    ioctl(cameraFd,VIDIOC_G_PARM,&streamparm);
+    printf("\nV4L2 Capture Streamparm:\n"
+           "Capture capability:%x\tCapture mode:%x\tFrame Rate:%d/%d\n",
+           streamparm.parm.capture.capability,//支持的模式(0x1表示支持高质量图片采集，0x1000表示支持帧率)
+           streamparm.parm.capture.capturemode,//当前模式(不支持上面的两种模式，则为0)
+           streamparm.parm.capture.timeperframe.numerator,//帧率分子
+           streamparm.parm.capture.timeperframe.denominator);//帧率分母
+}
+/*
+ *@brief:  获取视频流格式(v4l2_format)，这里主要是视频采集流的帧格式(v4l2_pix_format和v4l2_pix_format_mplane)
+ *@date:   2022.08.13
+ *@update: 2024.03.06
+ */
+void V4L2Capture::ioctlGetStreamFmt()
+{
+    v4l2_format format;
+    memset(&format,0,sizeof(format));
+    format.type = v4l2BufType;
+    ioctl(cameraFd,VIDIOC_G_FMT,&format);
+    //单平面视频采集帧格式
+    if(v4l2BufType == V4L2_BUF_TYPE_VIDEO_CAPTURE)
+    {
+        printf("\nV4L2 Plane pixformat:\n"
+               "pix size:%dx%d\t pixelformat:%c%c%c%c\n"
+               "field:%d\t bytesperline:%d\t sizeimage:%d\t colorspace:%d\n",
+               format.fmt.pix.width,format.fmt.pix.height,//宽高
+               format.fmt.pix.pixelformat&0xFF,(format.fmt.pix.pixelformat>>8)&0xFF,
+               (format.fmt.pix.pixelformat>>16)&0xFF,(format.fmt.pix.pixelformat>>24)&0xFF,//帧格式
+               format.fmt.pix.field,//场格式
+               format.fmt.pix.bytesperline,format.fmt.pix.sizeimage,//每行字节数，图像大小
+               format.fmt.pix.colorspace);//颜色空间
+    }
+    //多平面视频采集帧格式
+    else if(v4l2BufType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
+    {
+        this->planes_num = format.fmt.pix_mp.num_planes;
+        printf("\nV4L2 Mplane pixformat:\n"
+               "pix size:%dx%d\t pixelformat:%c%c%c%c\n"
+               "field:%d\t colorspace:%d\n"
+               "num_planes:%d\n",
+               format.fmt.pix_mp.width,format.fmt.pix_mp.height,//宽高
+               format.fmt.pix_mp.pixelformat&0xFF,(format.fmt.pix_mp.pixelformat>>8)&0xFF,
+               (format.fmt.pix_mp.pixelformat>>16)&0xFF,(format.fmt.pix_mp.pixelformat>>24)&0xFF,//帧格式
+               format.fmt.pix_mp.field,//场格式
+               format.fmt.pix_mp.colorspace,//颜色空间
+               format.fmt.pix_mp.num_planes);//多平面的数量
+        //注:在T517上实测每个平面的信息在VIDIOC_REQBUFS之后才被填充,否则拿到的将是初始化值(0)或者上次设置的值
+        for(int i=0;i<format.fmt.pix_mp.num_planes;i++)
+        {
+            printf("\tbytesperline:%d\t sizeimage:%d\n",format.fmt.pix_mp.plane_fmt[i].bytesperline,
+                   format.fmt.pix_mp.plane_fmt[i].sizeimage);
+        }
     }
 }
 /*
@@ -709,17 +646,21 @@ void V4L2Capture::selectCaptureSlot(bool needRgb24Frame, bool needOriginFrame)
     {
         return;
     }
-    //双缓冲(避免通过信号发出去的帧数据来不及处理显示而被下一帧数据覆盖)
-    if(selectRgbFrameBuf == NULL)
+    if(needRgb24Frame)
     {
-        selectRgbFrameBuf = (uchar *)malloc(pixelWidth*pixelHeight*3);
+        //双缓冲(避免通过信号发出去的帧数据来不及处理显示而被下一帧数据覆盖)
+        if(selectRgbFrameBuf == NULL)
+        {
+            selectRgbFrameBuf = (uchar *)malloc(pixelWidth*pixelHeight*3);
+        }
+        if(selectRgbFrameBuf2 == NULL)
+        {
+            selectRgbFrameBuf2 = (uchar *)malloc(pixelWidth*pixelHeight*3);
+        }
     }
-    if(selectRgbFrameBuf2 == NULL)
-    {
-        selectRgbFrameBuf2 = (uchar *)malloc(pixelWidth*pixelHeight*3);
-    }
-    uchar *curRgbFrameBuf = selectRgbFrameBuf;
 
+    //存放rgb帧的地址
+    uchar *curRgbFrameBuf = selectRgbFrameBuf;
     //存放原生帧的地址
     uchar *originFrameAddrVec[VIDEO_MAX_PLANES] = {NULL};
     uchar **originFrameAddr =needOriginFrame?originFrameAddrVec:NULL;
@@ -742,11 +683,11 @@ void V4L2Capture::selectCaptureSlot(bool needRgb24Frame, bool needOriginFrame)
             {
                 continue;
             }
-            printf("select error:%d\n",errno);
+            printf("selectCaptureSlot error:%d\n",errno);
         }
         else if(ret == 0)
         {
-            printf("select timeout.\n");
+            printf("selectCaptureSlot timeout.\n");
         }
         else
         {

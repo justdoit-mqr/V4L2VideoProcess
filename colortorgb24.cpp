@@ -13,6 +13,11 @@
 #include <QDebug>
 #include <QTime>
 
+ColorToRgb24::ColorAdjustmentParam ColorToRgb24::colorAdjustParam;
+int ColorToRgb24::brightnessLUT[256] = {0};
+int ColorToRgb24::contrastLUT[256] = {0};
+int ColorToRgb24::saturationLUT[511] = {0};
+
 ColorToRgb24::ColorToRgb24()
 {
 
@@ -50,16 +55,28 @@ void ColorToRgb24::yuyv_to_rgb24_shift(uchar *yuyv, uchar *rgb24,
         r = y0 + r_uv;
         g = y0 - g_uv;
         b = y0 + b_uv;
-        rgb24[rgbIndex++] = (r > 255)?255:(r < 0)?0:r;
-        rgb24[rgbIndex++] = (g > 255)?255:(g < 0)?0:g;
-        rgb24[rgbIndex++] = (b > 255)?255:(b < 0)?0:b;
+        r = (r > 255)?255:(r < 0)?0:r;
+        g = (g > 255)?255:(g < 0)?0:g;
+        b = (b > 255)?255:(b < 0)?0:b;
+#ifdef ENABLE_COLOR_ADJUST
+        rgbColorAdjust(r,g,b);
+#endif
+        rgb24[rgbIndex++] = r;
+        rgb24[rgbIndex++] = g;
+        rgb24[rgbIndex++] = b;
         //像素2的rgb数据
         r = y1 + r_uv;
         g = y1 - g_uv;
         b = y1 + b_uv;
-        rgb24[rgbIndex++] = (r > 255)?255:(r < 0)?0:r;
-        rgb24[rgbIndex++] = (g > 255)?255:(g < 0)?0:g;
-        rgb24[rgbIndex++] = (b > 255)?255:(b < 0)?0:b;
+        r = (r > 255)?255:(r < 0)?0:r;
+        g = (g > 255)?255:(g < 0)?0:g;
+        b = (b > 255)?255:(b < 0)?0:b;
+#ifdef ENABLE_COLOR_ADJUST
+        rgbColorAdjust(r,g,b);
+#endif
+        rgb24[rgbIndex++] = r;
+        rgb24[rgbIndex++] = g;
+        rgb24[rgbIndex++] = b;
     }
     //qDebug()<<"yuyv_to_rgb24_shift-end:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
 }
@@ -119,28 +136,52 @@ void ColorToRgb24::nv12_21_to_rgb24_shift(bool is_nv12, uchar *nv12_21, uchar *r
             r = y_odd1 + r_uv;
             g = y_odd1 - g_uv;
             b = y_odd1 + b_uv;
-            rgb24[cur_pixel_rgb_pos] = (r > 255)?255:(r < 0)?0:r;
-            rgb24[cur_pixel_rgb_pos+1] = (g > 255)?255:(g < 0)?0:g;
-            rgb24[cur_pixel_rgb_pos+2] = (b > 255)?255:(b < 0)?0:b;
+            r = (r > 255)?255:(r < 0)?0:r;
+            g = (g > 255)?255:(g < 0)?0:g;
+            b = (b > 255)?255:(b < 0)?0:b;
+#ifdef ENABLE_COLOR_ADJUST
+            rgbColorAdjust(r,g,b);
+#endif
+            rgb24[cur_pixel_rgb_pos] = r;
+            rgb24[cur_pixel_rgb_pos+1] = g;
+            rgb24[cur_pixel_rgb_pos+2] = b;
             r = y_odd2 + r_uv;
             g = y_odd2 - g_uv;
             b = y_odd2 + b_uv;
-            rgb24[cur_pixel_rgb_pos+3] = (r > 255)?255:(r < 0)?0:r;
-            rgb24[cur_pixel_rgb_pos+4] = (g > 255)?255:(g < 0)?0:g;
-            rgb24[cur_pixel_rgb_pos+5] = (b > 255)?255:(b < 0)?0:b;
+            r = (r > 255)?255:(r < 0)?0:r;
+            g = (g > 255)?255:(g < 0)?0:g;
+            b = (b > 255)?255:(b < 0)?0:b;
+#ifdef ENABLE_COLOR_ADJUST
+            rgbColorAdjust(r,g,b);
+#endif
+            rgb24[cur_pixel_rgb_pos+3] = r;
+            rgb24[cur_pixel_rgb_pos+4] = g;
+            rgb24[cur_pixel_rgb_pos+5] = b;
             //偶数行
             r = y_even1 + r_uv;
             g = y_even1 - g_uv;
             b = y_even1 + b_uv;
-            rgb24[next_pixel_rgb_pos] = (r > 255)?255:(r < 0)?0:r;
-            rgb24[next_pixel_rgb_pos+1] = (g > 255)?255:(g < 0)?0:g;
-            rgb24[next_pixel_rgb_pos+2] = (b > 255)?255:(b < 0)?0:b;
+            r = (r > 255)?255:(r < 0)?0:r;
+            g = (g > 255)?255:(g < 0)?0:g;
+            b = (b > 255)?255:(b < 0)?0:b;
+#ifdef ENABLE_COLOR_ADJUST
+            rgbColorAdjust(r,g,b);
+#endif
+            rgb24[next_pixel_rgb_pos] = r;
+            rgb24[next_pixel_rgb_pos+1] = g;
+            rgb24[next_pixel_rgb_pos+2] = b;
             r = y_even2 + r_uv;
             g = y_even2 - g_uv;
             b = y_even2 + b_uv;
-            rgb24[next_pixel_rgb_pos+3] = (r > 255)?255:(r < 0)?0:r;
-            rgb24[next_pixel_rgb_pos+4] = (g > 255)?255:(g < 0)?0:g;
-            rgb24[next_pixel_rgb_pos+5] = (b > 255)?255:(b < 0)?0:b;
+            r = (r > 255)?255:(r < 0)?0:r;
+            g = (g > 255)?255:(g < 0)?0:g;
+            b = (b > 255)?255:(b < 0)?0:b;
+#ifdef ENABLE_COLOR_ADJUST
+            rgbColorAdjust(r,g,b);
+#endif
+            rgb24[next_pixel_rgb_pos+3] = r;
+            rgb24[next_pixel_rgb_pos+4] = g;
+            rgb24[next_pixel_rgb_pos+5] = b;
 
             //像素位置向后移动两列
             cur_pixel_pos += 2;
@@ -161,10 +202,86 @@ void ColorToRgb24::rgb4_to_rgb24(uchar *rgb32, uchar *rgb24, const uint &width, 
 {
     int rgb32_len = width*height*4;
     int rgb24_index = 0;
+#ifdef ENABLE_COLOR_ADJUST
+    int r,g,b;
+    for(int i=0;i<rgb32_len;i+=4)
+    {
+        r = rgb32[i+1];
+        g = rgb32[i+2];
+        b = rgb32[i+3];
+        rgbColorAdjust(r,g,b);
+        rgb24[rgb24_index] = r;
+        rgb24[++rgb24_index] = g;
+        rgb24[++rgb24_index] = b;
+    }
+#else
     for(int i=0;i<rgb32_len;i+=4)
     {
         rgb24[rgb24_index] = rgb32[i+1];
         rgb24[++rgb24_index] = rgb32[i+2];
         rgb24[++rgb24_index] = rgb32[i+3];
+    }
+#endif
+}
+/*
+ *@brief:  颜色调整参数设置
+ *@date:   2025.08.12
+ *@param:  brightness:亮度调整  典型范围[0.5,1.5]
+ *@param:  contrast:对比度调整  典型范围[0.5,1.5]
+ *@param:  saturation:饱和度调整  典型范围[0.0,2.0]
+ */
+void ColorToRgb24::setColorAdjustParam(const double &brightness, const double &contrast, const double &saturation)
+{
+    //qDebug()<<"setColorAdjustParam-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
+    colorAdjustParam.brightness = brightness;
+    colorAdjustParam.contrast = contrast;
+    colorAdjustParam.saturation = saturation;
+
+    //更新亮度、对比度查表数据
+    for(int i=0;i<256;i++)
+    {
+        brightnessLUT[i] = i*colorAdjustParam.brightness;
+        brightnessLUT[i] = (brightnessLUT[i] > 255)?255:(brightnessLUT[i] < 0)?0:brightnessLUT[i];
+        contrastLUT[i] = qRound(128+(i-128)*colorAdjustParam.contrast);
+        contrastLUT[i] = (contrastLUT[i] > 255)?255:(contrastLUT[i] < 0)?0:contrastLUT[i];
+    }
+    //更新饱和度查表数据
+    for(int i=0;i<511;i++)
+    {
+        saturationLUT[i] = qRound((i-255)*colorAdjustParam.saturation);
+    }
+    //qDebug()<<"setColorAdjustParam-start:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
+}
+/*
+ *@brief:  针对颜色调整参数(colorAdjustParam),对rgb颜色进行调整
+ *@date:   2025.08.12
+ *@param:  r,g,b:以引用形式传递原始数据，调整后的数据直接应用到参数上  范围[0,255]
+ */
+void ColorToRgb24::rgbColorAdjust(int &r, int &g, int &b)
+{
+    //对比度调整
+    if(colorAdjustParam.contrast != 1.0)
+    {
+        r = contrastLUT[r];
+        g = contrastLUT[g];
+        b = contrastLUT[b];
+    }
+    //饱和度调整(相对更耗时，如果硬件性能不够的话，尽量不要调整该参数)
+    if(colorAdjustParam.saturation != 1.0)
+    {
+        int luma = (306*r+601*g+117*b)>>10;
+        r = luma + saturationLUT[r-luma+255];
+        g = luma + saturationLUT[g-luma+255];
+        b = luma + saturationLUT[b-luma+255];
+        r = (r > 255)?255:(r < 0)?0:r;
+        g = (g > 255)?255:(g < 0)?0:g;
+        b = (b > 255)?255:(b < 0)?0:b;
+    }
+    //亮度调整(顺序上放在最后)
+    if(colorAdjustParam.brightness != 1.0)
+    {
+        r = brightnessLUT[r];
+        g = brightnessLUT[g];
+        b = brightnessLUT[b];
     }
 }

@@ -18,9 +18,10 @@
  *@date:   2024.05.17
  *@param:  pixel_format:帧格式(使用v4l2的宏)
  *@param:  pixel_width:像素宽度(需要确保为偶数)  pixel_height:像素高度
+ *@param:  is_tv_range:true=TV Range   false=FULL Range
  */
-V4l2Rendering::V4l2Rendering(uint pixel_format, uint pixel_width, uint pixel_height, QObject *parent)
-    : QObject(parent),pixelFormat(pixel_format),pixelWidth(pixel_width),pixelHeight(pixel_height),
+V4l2Rendering::V4l2Rendering(uint pixel_format, uint pixel_width, uint pixel_height, bool is_tv_range, QObject *parent)
+    : QObject(parent),pixelFormat(pixel_format),pixelWidth(pixel_width),pixelHeight(pixel_height),isTVRange(is_tv_range),
     texture1(QOpenGLTexture::Target2D),texture2(QOpenGLTexture::Target2D),texture3(QOpenGLTexture::Target2D)
 {
 
@@ -40,7 +41,7 @@ void V4l2Rendering::initializeGL()
     isInitGl = true;
 
     initializeOpenGLFunctions();//绑定QOpenGLFunctions的上下文
-    glClearColor(1.0f,0.0f,0.0f,1.0f);//设置清屏颜色
+    glClearColor(0.0f,0.0f,0.0f,1.0f);//设置清屏颜色
     glClear(GL_COLOR_BUFFER_BIT);//清空颜色缓冲区
 
     /*0.关联上下文的销毁信号，用来销毁OpenGL纹理对象*/
@@ -48,13 +49,14 @@ void V4l2Rendering::initializeGL()
             this,&V4l2Rendering::destroyTexture,Qt::DirectConnection);
 
     /*1.初始化VAO和VBO*/
-    VAO.create();//创建顶点数组对象
+    VAO.create();//创建顶点数组对象(向GPU申请创建)
     VAO.bind();//将顶点数组对象绑定到opengl绑定点，直到release保存着顶点数据状态的所有修改
-    VBO.create();//创建缓存对象
-    VBO.bind();//绑定当前顶点缓存区
+    VBO.create();//创建缓存对象(向GPU申请创建)，本质是一段可供使用的GPU内存
+    VBO.bind();//绑定到当前顶点缓存区
     VBO.setUsagePattern(QOpenGLBuffer::StaticDraw);//设置为一次修改，多次使用(坐标不变,变得只是像素点)提高优化效率
     //顶点数据(顶点坐标(3float[-1.0f-1.0f])+纹理坐标(2float[0.0f-1.0f]))
-    //纹理坐标的Y方向需要是反的,因为opengl中的坐标系原点为左下角，而显示纹理以左上角为坐标原点
+    //opengl标准化设备坐标以屏幕中心为原点，坐标在[-1,1]之间。纹理坐标则以左下角为原点，范围为[0,1]
+    //纹理坐标的Y方向需要是反的,因为纹理坐标以左下角为原点，而显示纹理以左上角为坐标原点
     float vertices[] = {
         //顶点坐标            //纹理坐标
         -1.0f, -1.0f, 0.0f,  0.0f, 1.0f,        //左下
@@ -87,6 +89,15 @@ void V4l2Rendering::initializeGL()
     //使能VAO指定名称/location位置索引的属性变量,此处使用属性名，原因同上
     shaderProgram.enableAttributeArray("aPos");//顶点着色器的顶点坐标信息，意味着opengl使用顶点坐标绘制图形
     shaderProgram.enableAttributeArray("aTexCoord");//顶点着色器的纹理坐标信息，意味着opengl使用纹理坐标来对纹理进行映射，实现纹理贴图效果
+    //为顶点着色器传递初始化的镜像参数
+    shaderProgram.setUniformValue("hMirror",mirrorParam.hMirror);
+    shaderProgram.setUniformValue("vMirror",mirrorParam.vMirror);
+    //为片段着色器传递初始化的isTVRange参数和颜色调整参数
+    shaderProgram.setUniformValue("isTvRange",isTVRange);
+    shaderProgram.setUniformValue("enableColorAdjust",colorAdjustParam.enableColorAdjust);
+    shaderProgram.setUniformValue("brightness",colorAdjustParam.brightness);
+    shaderProgram.setUniformValue("contrast",colorAdjustParam.contrast);
+    shaderProgram.setUniformValue("saturation",colorAdjustParam.saturation);
 
     VBO.release();
     VAO.release();
@@ -108,16 +119,89 @@ void V4l2Rendering::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT);//防止叠图
 
-    //绑定着色器程序和VAO
-    shaderProgram.bind();
-    VAO.bind();
+    //仅在纹理对象有效(setData)的情况下才绘制纹理
+    if(isVaildTexture)
+    {
+        //绑定着色器程序和VAO
+        shaderProgram.bind();
+        VAO.bind();
 
-    //绘制纹理
-    drawTexture();
+        //为顶点着色器传递新的镜像参数
+        if(mirrorParamChanged)
+        {
+            shaderProgram.setUniformValue("hMirror",mirrorParam.hMirror);
+            shaderProgram.setUniformValue("vMirror",mirrorParam.vMirror);
 
-    //释放着色器程序和VAO
-    shaderProgram.release();
-    VAO.release();
+            colorAdjustParamChanged = false;
+        }
+        //为片段着色器传递新的颜色调整参数
+        if(colorAdjustParamChanged)
+        {
+            shaderProgram.setUniformValue("enableColorAdjust",colorAdjustParam.enableColorAdjust);
+            shaderProgram.setUniformValue("brightness",colorAdjustParam.brightness);
+            shaderProgram.setUniformValue("contrast",colorAdjustParam.contrast);
+            shaderProgram.setUniformValue("saturation",colorAdjustParam.saturation);
+
+            colorAdjustParamChanged = false;
+        }
+        //绘制纹理
+        drawTexture();
+
+        //释放着色器程序和VAO
+        shaderProgram.release();
+        VAO.release();
+    }
+}
+/*
+ *@brief:  设置镜像调整参数
+ *@date:   2025.08.14
+ *@param:  hMirror:true=水平镜像
+ *@param:  vMirror:true=垂直镜像
+ */
+void V4l2Rendering::setMirrorParam(const bool &hMirror, const bool &vMirror)
+{
+    if(mirrorParam.hMirror != hMirror)
+    {
+        mirrorParam.hMirror = hMirror;
+        mirrorParamChanged = true;
+    }
+    if(mirrorParam.vMirror != vMirror)
+    {
+        mirrorParam.vMirror = vMirror;
+        mirrorParamChanged = true;
+    }
+}
+/*
+ *@brief:  设置颜色调整参数
+ *@date:   2025.08.14
+ *@param:  enableColorAdjust:是否使能基础颜色调整
+ *@param:  brightness:亮度调整  典型范围[0.5,1.5]
+ *@param:  contrast:对比度调整  典型范围[0.5,1.5]
+ *@param:  saturation:饱和度调整  典型范围[0.0,2.0]
+ */
+void V4l2Rendering::setColorAdjustParam(const bool &enableColorAdjust, const float &brightness,
+                                        const float &contrast, const float &saturation)
+{
+    if(colorAdjustParam.enableColorAdjust != enableColorAdjust)
+    {
+        colorAdjustParam.enableColorAdjust = enableColorAdjust;
+        colorAdjustParamChanged = true;
+    }
+    if(colorAdjustParam.brightness != brightness)
+    {
+        colorAdjustParam.brightness = brightness;
+        colorAdjustParamChanged = true;
+    }
+    if(colorAdjustParam.contrast != contrast)
+    {
+        colorAdjustParam.contrast = contrast;
+        colorAdjustParamChanged = true;
+    }
+    if(colorAdjustParam.saturation != saturation)
+    {
+        colorAdjustParam.saturation = saturation;
+        colorAdjustParamChanged = true;
+    }
 }
 /*
  *@brief:  更新(渲染)v4l2帧数据
@@ -134,6 +218,7 @@ void V4l2Rendering::updateV4l2Frame(uchar **v4l2FrameData)
     {
         return;
     }
+    isVaildTexture = true;
     //one planes格式，设置两个纹理对象数据
     if(pixelFormat == V4L2_PIX_FMT_YUYV ||
             pixelFormat == V4L2_PIX_FMT_YVYU)
@@ -167,16 +252,24 @@ void V4l2Rendering::updateV4l2Frame(uchar **v4l2FrameData)
 void V4l2Rendering::initVertexShader()
 {
     /*顶点着色器，两个输入(顶点坐标(vec3)+纹理坐标(vec2)),其中顶点坐标转成vec4传给内置变量。
-     *一个输出(纹理坐标，此处不经过处理与输入一致)传递给下一个着色器*/
-    vertexShader = QString("attribute  vec3 aPos;  "
-                           "attribute  vec2 aTexCoord;  "
-                           "varying  vec2 TexCoord;  "
+     *两个uniform全局变量(在外部传递镜像参数)，一个输出(纹理坐标，根据镜像参数将输入的纹理坐标
+     *进行处理后传给该输出)传递给下一个着色器*/
+    vertexShader = QString("attribute vec3 aPos;\n"
+                           "attribute vec2 aTexCoord;\n"
+                           "varying vec2 TexCoord;\n"
                            "\n"
-                           "void main()  "
-                           "{  "
-                           "gl_Position = vec4(aPos, 1.0);  "
-                           "TexCoord = aTexCoord;  "
-                           "}  ");
+                           "uniform bool hMirror;\n"
+                           "uniform bool vMirror;\n"
+                           "\n"
+                           "void main(){\n"
+                           "vec2 adjustedTexCoord = aTexCoord;\n"
+                           "\n"
+                           "if(hMirror){adjustedTexCoord.x = 1.0 - adjustedTexCoord.x;}\n"
+                           "if(vMirror){adjustedTexCoord.y = 1.0 - adjustedTexCoord.y;}\n"
+                           "\n"
+                           "gl_Position = vec4(aPos, 1.0);\n"
+                           "TexCoord = adjustedTexCoord;\n"
+                           "}\n");
 
     //获取当前的glsl版本，声明到着色器中
     QString glslVersionStr = QString((const char*)glGetString(GL_SHADING_LANGUAGE_VERSION));
@@ -206,38 +299,68 @@ void V4l2Rendering::initVertexShader()
             vertexShader.prepend(QString("#version %1\n").arg(glslVersion));
         }
     }
-    //qDebug()<<"vertexShader:"<<vertexShader;
+    //qDebug().noquote()<<"vertexShader:\n"<<vertexShader;
 }
 /*
  *@brief:  初始化片段着色器
- *注：此处片段着色器内部使用的yuv转rgb为BT709标准的Full range格式的转换公式，根据不同的yuv格式实现不同的处理
+ *注：此处片段着色器内部使用的YUV转RGB(包括饱和度算法的亮度系数)为BT.709标准的Full range格式的转换公式(如果标识了TV Range，内部会自动
+ *将其转换为FULL Range)，根据不同的YUV格式实现不同的处理。
+ *实测对于BT.601的数据按照BT.709方式处理和BT.601的方式处理，显示效果没有太大的差距，为了着色器程序的处理性能，此处不再根据全局变量动态区分两
+ *种标准，而是均使用BT.709标准处理。
  *@date:   2024.05.17
  */
 void V4l2Rendering::initFragmentShader()
 {
+    /*此处定义片段着色器，不同的帧格式片段着色器程序代码略有不同，所以这里通过判断条件分支，设置不同的着色器字符串。
+     *以下着色器程序的基本组成一般包括：
+     *一个输入(TexCoord纹理坐标，来自与顶点着色器的输出);若干个uniform全局变量(包括若干纹理采样器(在外部绑定纹理及通道)和TV Range标志
+     *参数(着色器程序默认按照Full Range进行归一化处理，如果是纹理采样输入是TV Range，需要先转换成Full Range)，以及若干颜色调整参数，这
+     *些参数在外部传递);一个输出(vec4,片段纹理颜色，低版本为内置的gl_FragColor,高版本需要通过out vec4 FragColor自定义输出);
+     *通过采样器获取对应通道的纹理数据(可以通过插值匹配计算纹理坐标区域各点的值)，根据TV Range标志确定是否转换，然后再通过yuv转rgb公式，通
+     *过矩阵计算对应点的rgb数据输出。最后根据外部设置的颜色调整参数，选择是否对rgb进一步处理(亮度、对比度、饱和度等基础的颜色调节)，以及在图
+     *像输出之前做一次伽马校正，该操作针对人眼感知的明暗处理上效果非常好，比较适合对摄像头采集数据处理，但相对也消耗一些性能。*/
+
     /*one planes格式，需要两个纹理采样器(两通道取y+四通道取uv)*/
     if(pixelFormat == V4L2_PIX_FMT_YUYV || pixelFormat == V4L2_PIX_FMT_YVYU)
     {
-        /*片段着色器，一个输入(纹理坐标)，两个纹理采样器(在外部绑定纹理及通道)，一个输出(vec4,片段纹理颜色,低版本为内置的gl_FragColor,
-         *高版本需要通过out vec4 FragColor自定义输出)，通过采样器获取对应通道的纹理数据(可以通过插值匹配计算纹理坐标区域各点的值)，然后
-         *通过yuv转rgb公式，通过矩阵计算对应点的rgb数据输出。*/
-        QString tmpShader = QString("varying vec2 TexCoord;"
-                                    "uniform sampler2D texY;"
-                                    "uniform sampler2D texUV;"
-                                    ""
-                                    "void main()"
-                                    "{"
-                                    "float y = texture2D(texY, TexCoord).r;"
-                                    "vec4 yuyv = texture2D(texUV, TexCoord).rgba - vec4(0,0.5,0,0.5);"
-                                    "float u = yuyv.g;"
-                                    "float v = yuyv.a;"
-
-                                    "vec3 yuv = vec3(y, %1, %2);"
+        QString tmpShader = QString("varying vec2 TexCoord;\n\n"
+                                    //纹理采样及TV Range转换标志
+                                    "uniform bool isTvRange;\n"
+                                    "uniform sampler2D texY;\n"
+                                    "uniform sampler2D texUV;\n\n"
+                                    //颜色调整参数
+                                    "uniform bool enableColorAdjust;\n"
+                                    "uniform float brightness;\n"
+                                    "uniform float contrast;\n"
+                                    "uniform float saturation;\n\n"
+                                    //主函数
+                                    "void main(){\n"
+                                    //yuv采样转换为rgb
+                                    "float y = texture2D(texY, TexCoord).r;\n"
+                                    "vec2 uv = texture2D(texUV, TexCoord).ga;\n"
+                                    "if(isTvRange){\n"//TV Range转换为FULL Range
+                                    "y = (y*255.0-16.0)/(235.0-16.0);\n"
+                                    "uv = (uv*255.0-vec2(16.0,16.0))/(240.0-16.0);\n"
+                                    "}\n"
+                                    "uv = uv - vec2(0.5,0.5);\n"
+                                    "float u = uv.r;\n"
+                                    "float v = uv.g;\n"
+                                    "vec3 yuv = vec3(y, %1, %2);\n"
                                     "vec3 rgb = mat3(1.0,      1.0,      1.0,"
-                                                    "0.0,      -0.1868,  1.8556,"
-                                                    "1.5748,   -0.4681,   0.0) * yuv;"
-                                    "gl_FragColor = vec4(rgb, 1.0);"
-                                    "}");
+                                                    "0.0,      -0.187324,  1.8556,"
+                                                    "1.5748,   -0.468124,   0.0) * yuv;\n\n"
+                                    //rgb颜色调整
+                                    "if(enableColorAdjust){\n"
+                                    "rgb = (rgb - 0.5) * contrast + 0.5;\n"
+                                    "vec3 luminanceVec = vec3(dot(rgb, vec3(0.2126, 0.7152, 0.0722)));\n"
+                                    "rgb = luminanceVec + (rgb - luminanceVec) * saturation;\n"
+                                    "rgb = rgb * brightness;\n"
+                                    "}\n\n"
+                                    //rgb校正及输出
+                                    "rgb = clamp(rgb,0.0,1.0);\n"
+                                    "rgb = pow(rgb, vec3(1.0/2.2));\n"//伽马校正
+                                    "gl_FragColor = vec4(rgb, 1.0);\n"
+                                    "}\n");
         //格式UV顺序不同
         if(pixelFormat == V4L2_PIX_FMT_YUYV)
         {
@@ -251,25 +374,44 @@ void V4l2Rendering::initFragmentShader()
     /*two planes格式，需要两个纹理采样器*/
     else if(pixelFormat == V4L2_PIX_FMT_NV12 || pixelFormat == V4L2_PIX_FMT_NV21)
     {
-        /*片段着色器，一个输入(纹理坐标)，两个纹理采样器(在外部绑定纹理及通道)，一个输出(vec4,片段纹理颜色，低版本为内置的gl_FragColor,
-         *高版本需要通过out vec4 FragColor自定义输出)，通过采样器获取对应通道的纹理数据(可以通过插值匹配计算纹理坐标区域各点的值)，然后
-         *通过yuv转rgb公式，通过矩阵计算对应点的rgb数据输出。*/
-        QString tmpShader = QString("varying vec2 TexCoord;"
-                                    "uniform sampler2D texY;"
-                                    "uniform sampler2D texUV;"
-                                    ""
-                                    "void main()"
-                                    "{"
-                                    "float y = texture2D(texY, TexCoord).r;"
-                                    "vec2 uv = texture2D(texUV, TexCoord).ra - vec2(0.5, 0.5);"
-                                    "float u = uv.r;"
-                                    "float v = uv.g;"
-                                    "vec3 yuv = vec3(y, %1, %2);"
+        QString tmpShader = QString("varying vec2 TexCoord;\n\n"
+                                    //纹理采样及TV Range转换标志
+                                    "uniform bool isTvRange;\n"
+                                    "uniform sampler2D texY;\n"
+                                    "uniform sampler2D texUV;\n\n"
+                                    //颜色调整参数
+                                    "uniform bool enableColorAdjust;\n"
+                                    "uniform float brightness;\n"
+                                    "uniform float contrast;\n"
+                                    "uniform float saturation;\n\n"
+                                    //主函数
+                                    "void main(){\n"
+                                    //yuv采样转换为rgb
+                                    "float y = texture2D(texY, TexCoord).r;\n"
+                                    "vec2 uv = texture2D(texUV, TexCoord).ra;\n"
+                                    "if(isTvRange){\n"//TV Range转换为FULL Range
+                                    "y = (y*255.0-16.0)/(235.0-16.0);\n"
+                                    "uv = (uv*255.0-vec2(16.0,16.0))/(240.0-16.0);\n"
+                                    "}\n"
+                                    "uv = uv - vec2(0.5, 0.5);\n"
+                                    "float u = uv.r;\n"
+                                    "float v = uv.g;\n"
+                                    "vec3 yuv = vec3(y, %1, %2);\n"
                                     "vec3 rgb = mat3(1.0,      1.0,      1.0,"
-                                                    "0.0,      -0.1868,  1.8556,"
-                                                    "1.5748,   -0.4681,   0.0) * yuv;"
-                                    "gl_FragColor = vec4(rgb, 1.0);"
-                                    "}");
+                                                    "0.0,      -0.187324,  1.8556,"
+                                                    "1.5748,   -0.468124,   0.0) * yuv;\n\n"
+                                    //rgb颜色调整
+                                    "if(enableColorAdjust){\n"
+                                    "rgb = (rgb - 0.5) * contrast + 0.5;\n"
+                                    "vec3 luminanceVec = vec3(dot(rgb, vec3(0.2126, 0.7152, 0.0722)));\n"
+                                    "rgb = luminanceVec + (rgb - luminanceVec) * saturation;\n"
+                                    "rgb = rgb * brightness;\n"
+                                    "}\n\n"
+                                    //rgb校正及输出
+                                    "rgb = clamp(rgb,0.0,1.0);\n"
+                                    "rgb = pow(rgb, vec3(1.0/2.2));\n"//伽马校正
+                                    "gl_FragColor = vec4(rgb, 1.0);\n"
+                                    "}\n");
         //格式UV顺序不同
         if(pixelFormat == V4L2_PIX_FMT_NV12)
         {
@@ -283,25 +425,44 @@ void V4l2Rendering::initFragmentShader()
     /*three planes格式，需要三个纹理采样器*/
     else if(pixelFormat == V4L2_PIX_FMT_YUV420 || pixelFormat == V4L2_PIX_FMT_YVU420)
     {
-        /*片段着色器，一个输入(纹理坐标)，三个纹理采样器(在外部绑定纹理及通道)，一个输出(vec4,片段纹理颜色，低版本为内置的gl_FragColor,
-         *高版本需要通过out vec4 FragColor自定义输出)，通过采样器获取对应通道的纹理数据(可以通过插值匹配计算纹理坐标区域各点的值)，然后
-         *通过yuv转rgb公式，通过矩阵计算对应点的rgb数据输出。*/
-        QString tmpShader = QString("varying vec2 TexCoord;"
-                                    "uniform sampler2D texY;"
-                                    "uniform sampler2D texU;"
-                                    "uniform sampler2D texV;"
-                                    ""
-                                    "void main()"
-                                    "{"
-                                    "float y = texture2D(texY, TexCoord).r;"
-                                    "float u = texture2D(texU, TexCoord).r - 0.5;"
-                                    "float v = texture2D(texV, TexCoord).r - 0.5;"
-                                    "vec3 yuv = vec3(y, %1, %2);"
+        QString tmpShader = QString("varying vec2 TexCoord;\n\n"
+                                    //纹理采样及TV Range转换标志
+                                    "uniform bool isTvRange;\n"
+                                    "uniform sampler2D texY;\n"
+                                    "uniform sampler2D texU;\n"
+                                    "uniform sampler2D texV;\n\n"
+                                    //颜色调整参数
+                                    "uniform bool enableColorAdjust;\n"
+                                    "uniform float brightness;\n"
+                                    "uniform float contrast;\n"
+                                    "uniform float saturation;\n\n"
+                                    //主函数
+                                    "void main(){\n"
+                                    //yuv采样转换为rgb
+                                    "float y = texture2D(texY, TexCoord).r;\n"
+                                    "float u = texture2D(texU, TexCoord).r - 0.5;\n"
+                                    "float v = texture2D(texV, TexCoord).r - 0.5;\n"
+                                    "if(isTvRange){\n"//TV Range转换为FULL Range
+                                    "y = (y*255.0-16.0)/(235.0-16.0);\n"
+                                    "u = (u*255.0-16.0)/(240.0-16.0);\n"
+                                    "v = (v*255.0-16.0)/(240.0-16.0);\n"
+                                    "}\n"
+                                    "vec3 yuv = vec3(y, %1, %2);\n"
                                     "vec3 rgb = mat3(1.0,      1.0,      1.0,"
-                                                    "0.0,      -0.1868,  1.8556,"
-                                                    "1.5748,   -0.4681,   0.0) * yuv;"
-                                    "gl_FragColor = vec4(rgb, 1.0);"
-                                    "}");
+                                                    "0.0,      -0.187324,  1.8556,"
+                                                    "1.5748,   -0.468124,   0.0) * yuv;\n\n"
+                                    //rgb颜色调整
+                                    "if(enableColorAdjust){\n"
+                                    "rgb = (rgb - 0.5) * contrast + 0.5;\n"
+                                    "vec3 luminanceVec = vec3(dot(rgb, vec3(0.2126, 0.7152, 0.0722)));\n"
+                                    "rgb = luminanceVec + (rgb - luminanceVec) * saturation;\n"
+                                    "rgb = rgb * brightness;\n"
+                                    "}\n\n"
+                                    //rgb校正及输出
+                                    "rgb = clamp(rgb,0.0,1.0);\n"
+                                    "rgb = pow(rgb, vec3(1.0/2.2));\n"//伽马校正
+                                    "gl_FragColor = vec4(rgb, 1.0);\n"
+                                    "}\n");
         //格式UV顺序不同
         if(pixelFormat == V4L2_PIX_FMT_YUV420)
         {
@@ -345,12 +506,12 @@ void V4l2Rendering::initFragmentShader()
             if(glslVersion >= 300)
             {
                 //OpenGL ES 3.0及以上加上版本标识ES，并指定精度(ES的特有操作)
-                fragmentShader.prepend(QString("#version %1 es\nprecision mediump float;").arg(glslVersion));
+                fragmentShader.prepend(QString("#version %1 es\nprecision mediump float;\n").arg(glslVersion));
             }
             else
             {
                 //OpenGL ES 2.0不用加版本头，仅指定精度(ES的特有操作)
-                fragmentShader.prepend(QString("precision mediump float;"));
+                fragmentShader.prepend(QString("precision mediump float;\n"));
             }
         }
         else
@@ -358,15 +519,13 @@ void V4l2Rendering::initFragmentShader()
             fragmentShader.prepend(QString("#version %1\n").arg(glslVersion));
         }
     }
-
-    //qDebug()<<"fragmentShader:"<<fragmentShader;
-
+    //qDebug().noquote()<<"fragmentShader:\n"<<fragmentShader;
 }
 /*
  *@brief:  初始化纹理对象
  *注:在初始化QOpenGLTexture纹理对象时，setFormat的参数很关键，之前在PC端(OpenGL)使用R8_UNorm、RG8_UNorm、RGB8_UNorm、RGBA8_UNorm
  *设置1-4通道的格式，运行没有问题。但在arm端(OpenGL es 2.0)怎么都出不来图像，经过排查确定是纹理对象的问题，好像是因为opengl es 2.0比较特殊
- *所以专门定义了一组LuminanceFormat、LuminanceAlphaFormat、RGBFormat、RGBAFormat来适配1-4通道格式，并且实测PC端也可以兼容该格式。
+ *所以专门定义了一组LuminanceFormat、LuminanceAlphaFormat(着色器中对应.ra)、RGBFormat、RGBAFormat来适配1-4通道格式，并且实测PC端也可以兼容该格式。
  *@date:   2024.05.17
  */
 void V4l2Rendering::initTexture()
@@ -507,7 +666,7 @@ void V4l2Rendering::drawTexture()
 /*
  *@brief:  销毁OpenGL纹理对象
  *销毁纹理对象必须在创建纹理对象的上下文中，所以将该函数关联QOpenGLContext::aboutToBeDestroyed信号。
- *正常情况下在析构函数中随着QOpenGLTexture对象的销毁，OpenGL纹理对象也会跟着销毁，所以不需要单独处理。但是我们的板子遇到了
+ *正常情况下在析构函数中随着QOpenGLContext对象的销毁，OpenGL纹理对象也会跟着销毁，所以不需要单独处理。但是我们的板子遇到了
  *执行两次initializeGL()的情况，且第一次初始化的上下文很快就销毁了，而在该上下文中创建的纹理对象必须通过信号去销毁，否则将导致
  *第二次初始化的上下文无法使用创建好的纹理对象，又无法销毁。
  *@date:   2024.05.17

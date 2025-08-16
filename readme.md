@@ -59,28 +59,24 @@ B=Y+u+((197*u)>>8)
 ```
 ### 1.3.代码功能及接口  
 #### 1.3.1.模块功能
-1.采集模块代码由V4L2Capture类实现，内部封装V4L2的相关接口，采集到的原始帧数据通过ColorToRgb24类提供的静态函数(目前支持V4L2_PIX_FMT_YUYV、V4L2_PIX_FMT_NV12、V4L2_PIX_FMT_NV21三种yuv格式到rgb24的转换处理，使用整形移位法提高性能)在cpu中完成软解码，将yuv等格式数据转换成rgb24传递给外部使用。  
+1.采集模块代码由V4L2Capture类实现，内部封装V4L2的相关接口，采集到的原始帧数据如果配置了需要软解码成RGB，则会通过ColorToRgb24类提供的静态函数(目前支持V4L2_PIX_FMT_YUYV、V4L2_PIX_FMT_NV12、V4L2_PIX_FMT_NV21三种yuv格式到rgb24的转换处理，使用整形移位法提高性能)在cpu中完成软解码，将yuv等格式数据转换成rgb24传递给外部使用。如果配置需要原始帧数据，也会将原始数据传递给外部使用(通过GPU解码渲染)。    
 2.该模块使用V4L2的标准流程和接口采集视频帧，使用mmap内存映射的方式实现从内核空间取帧数据到用户空间。  
 3.该模块提供两种取帧方式：一种是在类外定时调用指定接口(ioctlDequeueBuffers)取帧，可以自由控制软件的取帧频次，不过有些设备驱动当取帧频次小于硬件帧率时，显示会异常;另一种是采用select机制自动取帧，该方式在处理性能跟得上的情况下，取帧速率跟帧率一致，每取完一帧数据以信号的形式对外发送。要使用该方式只需在类构造函数中传递useSelect=true参数，内部会自动创建子线程自动完成取帧处理，外部只需绑定相关信号即可。  
 #### 1.3.2.代码接口  
 ```
+    //设备操作
     bool openDevice(const char *filename,bool isNonblock);//打开设备
     void closeDevice();//关闭设备
+    bool resetDevice();//重置设备
 
-    //查询设备信息
-    void ioctlQueryCapability();//查询设备的基本信息
-    void ioctlQueryStd();//查询设备支持的标准
-    void ioctlEnumInput();//查询设备的输入
-    void ioctlEnumFmt();//查询设备支持的帧格式
-    //设置/查询视频流数据
+    //打印设备信息(用于调试使用)
+    void printDeviceInfo();
+    //设置视频流数据
     void ioctlSetInput(int inputIndex);//设置当前设备输入
-    void ioctlGetStreamParm();//获取视频流参数
     void ioctlSetStreamParm(uint captureMode,uint timeperframe=30);//设置视频流参数
-    void ioctlGetStreamFmt();//获取视频流格式
     void ioctlSetStreamFmt(uint pixelformat,uint width,uint height);//设置视频流格式
     //初始化帧缓冲区
-    void ioctlRequestBuffers();//申请视频帧缓冲区(内核空间)
-    void ioctlMmapBuffers();//映射视频帧缓冲区到用户空间内存
+    bool ioctlRequestMmapBuffers();//申请并映射视频帧缓冲区到用户空间内存
     //帧采集控制
     void ioctlSetStreamSwitch(bool on);//启动/停止视频帧采集
     bool ioctlDequeueBuffers(uchar *rgb24FrameAddr,uchar *originFrameAddr[]=NULL);//从输出队列取缓冲帧
@@ -88,7 +84,7 @@ B=Y+u+((197*u)>>8)
 signals:
     //向外发射采集到的帧数据信号
     void captureOriginFrameSig(uchar **originFrame);//原始数据帧(pixelFormat,二维长度针对多平面类型的数量，单平面为1)
-    void captureRgb24FrameSig(uchar *rgb24Frame);//转换后的rgb24数据帧
+    void captureRgb24FrameSig(uchar *rgb24Frame);//转换后的rgb24数据帧，外部可通过QImage进行处理(镜像等)显示
 
     //外部调用，用于触发selectCaptureSlot()槽在子线程中执行
     void selectCaptureSig(bool needRgb24Frame,bool needOriginFrame);
@@ -104,7 +100,7 @@ void setPixmap(const QPixmap &pixmap);
 ```
 ### 2.2.OpenGLWidget渲染
 该组件的核心是通过封装的V4l2Rendering类对象调用opengl的api接口，通过着色器实现GPU硬解码渲染。  
-OpenGLWidget继承自QOpenGLWidget组件，目的是作为一个可视化组件显示渲染图像，而V4l2Rendering继承自QOpenGLExtraFunctions，内部封装了opengl的api接口，用于调用完成opengl的相关操作。组件构造函数有一些必要的参数(帧格式、帧宽高)需要传递，内部基于这些参数自动完成Opengl的初始化流程与着色器的设置。关于帧格式这里借用V4L2的帧格式宏定义，便于与采集模块对应，目前内部封装了(V4L2_PIX_FMT_YUYV、V4L2_PIX_FMT_YVYU、V4L2_PIX_FMT_NV12、V4L2_PIX_FMT_NV21、V4L2_PIX_FMT_YUV420、V4L2_PIX_FMT_YVU420)六种格式的处理。兼容了yuv422、yuv420p、yuv420sp等不同格式的处理，如有新的格式需求可参考已有的代码和着色器，添加对应的解析处理即可。  
+OpenGLWidget继承自QOpenGLWidget组件，目的是作为一个可视化组件显示渲染图像，而V4l2Rendering继承自QOpenGLExtraFunctions，内部封装了opengl的api接口，用于调用完成opengl的相关操作。组件构造函数有一些必要的参数(帧格式、帧宽高、TV Range标识)需要传递，内部V4l2Rendering基于这些参数自动完成Opengl的初始化流程与着色器的设置。另外还提供了对图像的镜像和基础颜色调整的接口。关于帧格式这里借用V4L2的帧格式宏定义，便于与采集模块对应，目前内部封装了(V4L2_PIX_FMT_YUYV、V4L2_PIX_FMT_YVYU、V4L2_PIX_FMT_NV12、V4L2_PIX_FMT_NV21、V4L2_PIX_FMT_YUV420、V4L2_PIX_FMT_YVU420)六种格式的处理。兼容了yuv422、yuv420p、yuv420sp等不同格式的处理，如有新的格式需求可参考已有的代码和着色器，添加对应的解析处理即可。  
 
 在编写该组件时遇到的坑比较多，包括但不限于OpenGL和OpenGL ES的版本在纹理采样通道格式上的区别，纹理通道绑定的调用次序，以及GLSL版本不同着色器的语法兼容性，纹理数据解包字节对齐方式对画面的影响等等，目前遇到的坑都已经填好了，细节参见代码，但可能还有些隐藏坑未被发现，但鉴于时间问题，该渲染组件暂时先告一段落，等以后有时间再来优化。
 

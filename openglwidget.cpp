@@ -19,8 +19,8 @@
  *@param:  pixel_format:帧格式(使用v4l2的宏)
  *@param:  pixel_width:像素宽度(需要确保为偶数)  pixel_height:像素高度
  */
-OpenGLWidget::OpenGLWidget(uint pixel_format, uint pixel_width, uint pixel_height, QWidget *parent)
-    : QOpenGLWidget(parent),v4l2Rendering(new V4l2Rendering(pixel_format,pixel_width,pixel_height))
+OpenGLWidget::OpenGLWidget(uint pixel_format, uint pixel_width, uint pixel_height, bool is_tv_range, QWidget *parent)
+    : QOpenGLWidget(parent),v4l2Rendering(new V4l2Rendering(pixel_format,pixel_width,pixel_height,is_tv_range))
 {
 
 }
@@ -32,6 +32,29 @@ OpenGLWidget::~OpenGLWidget()
     {
         delete v4l2Rendering;
     }
+}
+/*
+ *@brief:  设置镜像参数
+ *@date:   2025.08.14
+ *@param:  hMirror:true=水平镜像
+ *@param:  vMirror:true=垂直镜像
+ */
+void OpenGLWidget::setMirrorParam(const bool &hMirror, const bool &vMirror)
+{
+    v4l2Rendering->setMirrorParam(hMirror,vMirror);
+}
+/*
+ *@brief:  设置颜色调整参数
+ *@date:   2025.08.14
+ *@param:  enableColorAdjust:是否使能基础颜色调整
+ *@param:  brightness:亮度调整  典型范围[0.5,1.5]
+ *@param:  contrast:对比度调整  典型范围[0.5,1.5]
+ *@param:  saturation:饱和度调整  典型范围[0.0,2.0]
+ */
+void OpenGLWidget::setColorAdjustParam(const bool &enableColorAdjust, const float &brightness,
+                                       const float &contrast, const float &saturation)
+{
+    v4l2Rendering->setColorAdjustParam(enableColorAdjust,brightness,contrast,saturation);
 }
 /*
  *@brief:  该接口仅用于功能测试，通过读取yuv文件测试该类的渲染功能

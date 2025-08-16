@@ -5,29 +5,33 @@
 *
 ****************************************************************************/
 #include "videodisplaywidget.h"
+#include "colortorgb24.h"
 #include <QGridLayout>
 #include <QTime>
 #include <QDebug>
 
 //采集设备对应到linux系统下的文件名
-#define VIDEO_DEVICE "/dev/video1"
+#define VIDEO_DEVICE "/dev/video4"
 //采集帧宽高
-#define FRAME_WIDTH (1280)
-#define FRAME_HEIGHT (720)
+#define FRAME_WIDTH (720)
+#define FRAME_HEIGHT (576)
 
 VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     QWidget(parent)
 {
     //展示视频画面
 #ifdef USE_YUV_RENDERING_WIDGET
-    videoOutput = new OpenGLWidget(V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT,this);
+    videoOutput = new OpenGLWidget(V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT,true,this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
-    //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
+    videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
+    videoOutput->setMirrorParam(false,false);
+    videoOutput->setColorAdjustParam(true,1.0,0.7,1.0);
     //videoOutput->readYuvFileTest("./video/nv21_854x480.yuv",V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
 #else
     videoOutput = new PixmapWidget(this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
-    //videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
+    videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
+    ColorToRgb24::setColorAdjustParam(1.4,0.7,1.0);
     //videoOutput->readYuvFileTest("./video/nv21_854x480.yuv",V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
 #endif
 
@@ -169,7 +173,7 @@ void VideoDisplayWidget::captureBtnClickedSlot()
         captureBtn->setText("start capture");
         v4l2Capture->ioctlSetStreamSwitch(false);
         //有些平台驱动有问题，停止采集后需要重置设备，否则再次开启采集，画面显示会异常
-        v4l2Capture->resetDevice();
+        //v4l2Capture->resetDevice();
     }
 #else
     if(captureBtn->text() == "start capture")
@@ -211,25 +215,18 @@ bool VideoDisplayWidget::initV4l2CaptureDevice()
         return false;
     }
     /*检查设备的一些基本信息(可选项)*/
-    v4l2Capture->ioctlQueryCapability();
-    v4l2Capture->ioctlQueryStd();
-    v4l2Capture->ioctlEnumInput();
-    v4l2Capture->ioctlSetInput(0);
-    v4l2Capture->ioctlEnumFmt();
+    v4l2Capture->printDeviceInfo();
     /*设置采集数据的一些参数及格式(必选项)*/
-    v4l2Capture->ioctlSetStreamParm(2,25);//T517驱动传递2
+    v4l2Capture->ioctlSetInput(0);
+    v4l2Capture->ioctlSetStreamParm(0,25);//T517驱动传递2
     v4l2Capture->ioctlSetStreamFmt(V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
-    /*设置完参数后稍作延时，这个很关键，否则可能会出现进程退出的情况*/
+    /*设置完参数后稍作延时，这个在某些设备上很关键，否则可能会出现进程退出的情况*/
     usleep(100000);
-    /*申请视频帧缓冲区,对帧缓冲区进行内存映射(必选项)*/
-    v4l2Capture->ioctlRequestBuffers();
-    if(!v4l2Capture->ioctlMmapBuffers())
+    /*申请并映射视频帧缓冲区(必选项)*/
+    if(!v4l2Capture->ioctlRequestMmapBuffers())
     {
         return false;
     }
-    /*查询设置的参数是否生效*/
-    v4l2Capture->ioctlGetStreamParm();
-    v4l2Capture->ioctlGetStreamFmt();
     qDebug()<<"initDevice-end:"<<QTime::currentTime().toString("hh:mm:ss:zzz");
     return true;
 }

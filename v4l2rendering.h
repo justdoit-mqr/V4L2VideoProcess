@@ -26,12 +26,15 @@ class V4l2Rendering : public QObject,protected QOpenGLExtraFunctions
     Q_OBJECT
 public:
     explicit V4l2Rendering(uint pixel_format,uint pixel_width,
-                                uint pixel_height,QObject *parent=nullptr);
+                                uint pixel_height,bool is_tv_range = true,QObject *parent=nullptr);
 
     void initializeGL();
     void resizeGL(int w,int h);
     void paintGL();
 
+    void setMirrorParam(const bool &hMirror,const bool &vMirror);
+    void setColorAdjustParam(const bool &enableColorAdjust,const float &brightness,
+                             const float &contrast,const float &saturation);
     void updateV4l2Frame(uchar **v4l2FrameData);
 
 private:
@@ -44,6 +47,7 @@ private:
     uint pixelFormat = 0;//采集帧格式
     uint pixelWidth = 0;//像素宽度
     uint pixelHeight = 0;//像素高度
+    bool isTVRange = true;//TV range标识(通常摄像头采集的数据为该类型)
 
     //初始化标识
     bool isInitGl = false;
@@ -60,10 +64,29 @@ private:
     QOpenGLPixelTransferOptions pixelTransferOptions1;
     QOpenGLPixelTransferOptions pixelTransferOptions2;
     QOpenGLPixelTransferOptions pixelTransferOptions3;
+    //标识纹理对象是否有效(是否setData)
+    bool isVaildTexture = false;
 
+    //着色器
     QString vertexShader;//顶点着色器
     QString fragmentShader;//片段着色器
-    QOpenGLShaderProgram shaderProgram;//着色器程序    
+    QOpenGLShaderProgram shaderProgram;//着色器程序
+    //以下参数会直接传递给顶点着色器程序，由GLSL程序对纹理坐标进行处理，实现镜像效果
+    struct MirrorParam
+    {
+        bool hMirror = true;//水平镜像
+        bool vMirror = false;//垂直镜像
+    }mirrorParam;
+    bool mirrorParamChanged = false;//表示镜像参数是否改变
+    //以下参数会直接传递给片段着色器程序，由GLSL程序在rgb的基础上进行算法处理，实现基础的颜色调整
+    struct ColorAdjustmentParam
+    {
+        bool enableColorAdjust = false;//是否启用颜色调整
+        float brightness = 1.0;//亮度调节 1.0对应原图，典型范围[0.5,1.5],避免过曝或欠曝
+        float contrast = 1.0;//对比度调节，典型范围[0.5,1.5]，1.0对应原图
+        float saturation = 1.0;//饱和度调节，典型范围[0.0,2.0]，1.0表示原图，越大色彩越鲜艳，反之色彩越单调
+    }colorAdjustParam;
+    bool colorAdjustParamChanged = false;//表示颜色调整参数是否改变
 
 };
 

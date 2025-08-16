@@ -46,28 +46,19 @@ public:
     V4L2Capture(bool useSelect=true,QObject *parent = 0);
     ~V4L2Capture();
 
+    //设备操作
     bool openDevice(const char *filename,bool isNonblock);//打开设备
     void closeDevice();//关闭设备
     bool resetDevice();//重置设备
 
-    /* 以下方法利用V4L2的数据结构结合ioctl()函数实现对视频设备的读写及控制
-     * ioctl(int fd,unsigned long cmd,...)函数用于对设备的读取与控制(第三个参数一般涉及数据
-     * 传输时使用)，在用户空间使用ioctl系统调用控制设备，用户程序只需要通过命令码cmd告诉驱动程序它想
-     * 做什么，具体命令怎么解释和实现由驱动程序(这里就是v4l2驱动程序)的ioctl()函数来实现*/
-    //查询设备信息
-    void ioctlQueryCapability();//查询设备的基本信息
-    void ioctlQueryStd();//查询设备支持的标准
-    void ioctlEnumInput();//查询设备支持的输入
-    void ioctlEnumFmt();//查询设备支持的帧格式
-    //设置/查询视频流数据
+    //打印设备信息(用于调试使用)
+    void printDeviceInfo();
+    //设置视频流数据
     void ioctlSetInput(int inputIndex);//设置当前设备输入
-    void ioctlGetStreamParm();//获取视频流参数
     void ioctlSetStreamParm(uint captureMode,uint timeperframe=30);//设置视频流参数
-    void ioctlGetStreamFmt();//获取视频流格式
     void ioctlSetStreamFmt(uint pixelformat,uint width,uint height);//设置视频流格式
     //初始化帧缓冲区
-    void ioctlRequestBuffers();//申请视频帧缓冲区(内核空间)
-    bool ioctlMmapBuffers();//映射视频帧缓冲区到用户空间内存
+    bool ioctlRequestMmapBuffers();//申请并映射视频帧缓冲区到用户空间内存
     //帧采集控制
     void ioctlSetStreamSwitch(bool on);//启动/停止视频帧采集
     bool ioctlDequeueBuffers(uchar *rgb24FrameAddr,uchar *originFrameAddr[]=NULL);//从输出队列取缓冲帧
@@ -75,7 +66,7 @@ public:
 signals:
     //向外发射采集到的帧数据信号
     void captureOriginFrameSig(uchar **originFrame);//原始数据帧(pixelFormat,二维长度针对多平面类型的数量，单平面为1)
-    void captureRgb24FrameSig(uchar *rgb24Frame);//转换后的rgb24数据帧
+    void captureRgb24FrameSig(uchar *rgb24Frame);//转换后的rgb24数据帧,外部可通过QImage进行处理(镜像等)显示
 
     //外部调用，用于触发selectCaptureSlot()槽在子线程中执行
     void selectCaptureSig(bool needRgb24Frame,bool needOriginFrame);
@@ -84,7 +75,14 @@ public slots:
     void selectCaptureSlot(bool needRgb24Frame,bool needOriginFrame);
 
 private:
-    void ioctlQueueBuffers();//放缓冲帧进输入队列，在开始采集时会调用一次
+    //查询设备信息
+    bool ioctlQueryCapability();//查询设备的基本信息
+    void ioctlQueryStd();//查询设备支持的标准
+    void ioctlEnumInput();//查询设备支持的输入
+    void ioctlEnumFmt();//查询设备支持的帧格式
+    void ioctlGetStreamParm();//获取视频流参数
+    void ioctlGetStreamFmt();//获取视频流格式
+    //资源释放
     void unMmapBuffers();//释放视频缓冲区的映射内存
     void clearSelectResource();//清理select相关的资源
 
@@ -94,6 +92,7 @@ private:
     int cameraFd = -1;//设备文件句柄
     int v4l2BufType = V4L2_BUF_TYPE_VIDEO_CAPTURE;//采集帧类型(目前主要分单plane和多plane，根据查询的v4l2_capability自动设置)
     int planes_num = 1;//平面数，针对多平面采集帧格式(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
+
     volatile bool isStreamOn = false;//设备采集状态(启/停)
     uint pixelFormat = 0;//采集帧格式
     uint pixelWidth = 720;//像素宽度
