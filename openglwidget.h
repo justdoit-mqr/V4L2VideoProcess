@@ -32,6 +32,8 @@ public:
                                 uint pixel_height,bool is_tv_range=true,QWidget *parent = nullptr);
     ~OpenGLWidget();
 
+    //设置开启/关闭单次采集Image
+    void setSingleCaptureImage(bool on);
     //设置镜像参数
     void setMirrorParam(const bool &hMirror,const bool &vMirror);
     //设置颜色调整参数
@@ -51,6 +53,7 @@ private:
     V4l2Rendering *v4l2Rendering = nullptr;
 
 signals:
+    void captureImageSig(const QImage &image);
 
 public slots:
     void updateV4l2FrameSlot(uchar **v4l2Frame);

@@ -25,8 +25,13 @@ VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
     videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
     videoOutput->setMirrorParam(false,false);
-    videoOutput->setColorAdjustParam(true,1.0,0.7,1.0);
+    videoOutput->setColorAdjustParam(false,1.0,0.8,1.0);
     //videoOutput->readYuvFileTest("./video/nv21_854x480.yuv",V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
+    //保存图片
+    connect(videoOutput,&OpenGLWidget::captureImageSig,this,[this](const QImage &captureImage){
+        //可以开启一个QtConcurrent线程去处理，避免阻塞主线程影响视频实时渲染刷新
+        captureImage.save(QTime::currentTime().toString("HHmmsszzz")+".png",nullptr,100);
+    },Qt::QueuedConnection);
 #else
     videoOutput = new PixmapWidget(this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
@@ -197,7 +202,11 @@ void VideoDisplayWidget::captureBtnClickedSlot()
  */
 void VideoDisplayWidget::saveImageBtnClickedSlot()
 {
+#ifdef USE_YUV_RENDERING_WIDGET
+    videoOutput->setSingleCaptureImage(true);
+#else
     isSaveImage = true;
+#endif
 }
 /*
  *@brief:  初始化视频采集设备

@@ -22,7 +22,7 @@
 OpenGLWidget::OpenGLWidget(uint pixel_format, uint pixel_width, uint pixel_height, bool is_tv_range, QWidget *parent)
     : QOpenGLWidget(parent),v4l2Rendering(new V4l2Rendering(pixel_format,pixel_width,pixel_height,is_tv_range))
 {
-
+    connect(v4l2Rendering,&V4l2Rendering::captureImageSig,this,&OpenGLWidget::captureImageSig);
 }
 
 OpenGLWidget::~OpenGLWidget()
@@ -32,6 +32,15 @@ OpenGLWidget::~OpenGLWidget()
     {
         delete v4l2Rendering;
     }
+}
+/*
+ *@brief:  设置开启/关闭单次采集image
+ *@date:   2025.08.20
+ *@param:  on:true=开启  false=关闭
+ */
+void OpenGLWidget::setSingleCaptureImage(bool on)
+{
+    v4l2Rendering->setSingleCaptureImage(on);
 }
 /*
  *@brief:  设置镜像参数

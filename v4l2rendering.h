@@ -20,6 +20,7 @@
 #include <QOpenGLBuffer>
 #include <QOpenGLTexture>
 #include <QOpenGLPixelTransferOptions>
+#include <QOpenGLFramebufferObject>
 
 class V4l2Rendering : public QObject,protected QOpenGLExtraFunctions
 {
@@ -27,26 +28,36 @@ class V4l2Rendering : public QObject,protected QOpenGLExtraFunctions
 public:
     explicit V4l2Rendering(uint pixel_format,uint pixel_width,
                                 uint pixel_height,bool is_tv_range = true,QObject *parent=nullptr);
+    ~V4l2Rendering();
 
     void initializeGL();
     void resizeGL(int w,int h);
     void paintGL();
 
+    void setSingleCaptureImage(bool on){this->needCaptureImage = on;}
     void setMirrorParam(const bool &hMirror,const bool &vMirror);
     void setColorAdjustParam(const bool &enableColorAdjust,const float &brightness,
                              const float &contrast,const float &saturation);
     void updateV4l2Frame(uchar **v4l2FrameData);
 
+signals:
+    void captureImageSig(const QImage &image);
+
 private:
     void initVertexShader();
     void initFragmentShader();
     void initTexture();
+    void initShaderProgram();
+
+    void paintGLTexture();
     void drawTexture();
     void destroyTexture();
 
     uint pixelFormat = 0;//采集帧格式
     uint pixelWidth = 0;//像素宽度
     uint pixelHeight = 0;//像素高度
+    uint widgetWidth = 0;//渲染组件宽度
+    uint widgetHeight = 0;//渲染组件高度
     bool isTVRange = true;//TV range标识(通常摄像头采集的数据为该类型)
 
     //初始化标识
@@ -54,6 +65,9 @@ private:
     //顶点数据
     QOpenGLVertexArrayObject VAO;//存储顶点数据的来源与解析方式(管理VBO的状态数据)
     QOpenGLBuffer VBO;//缓存顶点数据(在显存中)
+    //帧缓冲对象
+    bool needCaptureImage = false;//表示当前是否需要捕获图像为Image图片
+    QOpenGLFramebufferObject *FBO = nullptr;//用于离屏渲染保存图片
     //纹理对象
     QOpenGLTexture texture1;
     QOpenGLTexture texture2;

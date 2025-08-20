@@ -27,6 +27,17 @@ V4l2Rendering::V4l2Rendering(uint pixel_format, uint pixel_width, uint pixel_hei
 
 }
 /*
+ *@brief:  析构函数，释放资源
+ *@date:   2025.08.20
+ */
+V4l2Rendering::~V4l2Rendering()
+{
+    if(FBO)
+    {
+        delete FBO;
+    }
+}
+/*
  *@brief:  建立OpenGL的资源和状态
  *注：通常情况下该函数仅会在第一次调用resize事件时会被调用一次，但在我们的RK3568(Qt5.15.8)上实测发现会被调用两次。
  *通过分析Qt源代码发现在resize事件触发opengl初始化后，在show事件处理时会判断内部QOpenGLContext的共享上下文是否与窗体
@@ -48,7 +59,7 @@ void V4l2Rendering::initializeGL()
     connect(QOpenGLContext::currentContext(),&QOpenGLContext::aboutToBeDestroyed,
             this,&V4l2Rendering::destroyTexture,Qt::DirectConnection);
 
-    /*1.初始化VAO和VBO*/
+    /*1.初始化VAO、VBO和FBO*/
     VAO.create();//创建顶点数组对象(向GPU申请创建)
     VAO.bind();//将顶点数组对象绑定到opengl绑定点，直到release保存着顶点数据状态的所有修改
     VBO.create();//创建缓存对象(向GPU申请创建)，本质是一段可供使用的GPU内存
@@ -65,6 +76,15 @@ void V4l2Rendering::initializeGL()
         1.0f,  1.0f,  0.0f,  1.0f, 0.0f         //右上
     };
     VBO.allocate(vertices,sizeof(vertices));//分配显存大小，并绑定顶点数据到缓存区
+    //初始化FBO
+    QOpenGLFramebufferObjectFormat fboFormat;
+    fboFormat.setAttachment(QOpenGLFramebufferObject::NoAttachment);//2D渲染，不需要深度和模板测试
+    fboFormat.setSamples(0);//视频帧非几何渲染，不使用多重采样
+    if(FBO)
+    {
+        delete FBO;
+        FBO = new QOpenGLFramebufferObject(pixelWidth,pixelHeight,fboFormat);
+    }
 
     /* 2.初始化着色器
      * 使用GLSL语言编写的顶点着色器和片段着色器程序，集成了部分yuv格式的转换处理。
@@ -76,28 +96,7 @@ void V4l2Rendering::initializeGL()
     initTexture();
 
     /*4.初始化着色器程序*/
-    shaderProgram.removeAllShaders();
-    shaderProgram.addShaderFromSourceCode(QOpenGLShader::Vertex,vertexShader);//附加顶点着色器和片段着色器
-    shaderProgram.addShaderFromSourceCode(QOpenGLShader::Fragment,fragmentShader);
-    shaderProgram.link();//链接着色器
-    shaderProgram.bind();
-    //使用VBO为数据源，设置解析格式,应用到VAO中
-    //第一个参数为VAO的属性名/location位置索引，与顶点着色器的输入变量关联;
-    //因为location需要在着色器中通过layout (location = *)指定，而该语法在glsl 330版本才提供,为了兼容旧版本，此处使用属性名
-    shaderProgram.setAttributeBuffer("aPos", GL_FLOAT, 0, 3, 5 * sizeof(float));
-    shaderProgram.setAttributeBuffer("aTexCoord", GL_FLOAT, 3*sizeof(float), 2, 5 * sizeof(float));
-    //使能VAO指定名称/location位置索引的属性变量,此处使用属性名，原因同上
-    shaderProgram.enableAttributeArray("aPos");//顶点着色器的顶点坐标信息，意味着opengl使用顶点坐标绘制图形
-    shaderProgram.enableAttributeArray("aTexCoord");//顶点着色器的纹理坐标信息，意味着opengl使用纹理坐标来对纹理进行映射，实现纹理贴图效果
-    //为顶点着色器传递初始化的镜像参数
-    shaderProgram.setUniformValue("hMirror",mirrorParam.hMirror);
-    shaderProgram.setUniformValue("vMirror",mirrorParam.vMirror);
-    //为片段着色器传递初始化的isTVRange参数和颜色调整参数
-    shaderProgram.setUniformValue("isTvRange",isTVRange);
-    shaderProgram.setUniformValue("enableColorAdjust",colorAdjustParam.enableColorAdjust);
-    shaderProgram.setUniformValue("brightness",colorAdjustParam.brightness);
-    shaderProgram.setUniformValue("contrast",colorAdjustParam.contrast);
-    shaderProgram.setUniformValue("saturation",colorAdjustParam.saturation);
+    initShaderProgram();
 
     VBO.release();
     VAO.release();
@@ -109,6 +108,8 @@ void V4l2Rendering::initializeGL()
  */
 void V4l2Rendering::resizeGL(int w, int h)
 {
+    this->widgetWidth = w;
+    this->widgetHeight = h;
     glViewport(0,0,w,h);
 }
 /*
@@ -122,34 +123,23 @@ void V4l2Rendering::paintGL()
     //仅在纹理对象有效(setData)的情况下才绘制纹理
     if(isVaildTexture)
     {
-        //绑定着色器程序和VAO
-        shaderProgram.bind();
-        VAO.bind();
-
-        //为顶点着色器传递新的镜像参数
-        if(mirrorParamChanged)
+        if(needCaptureImage)
         {
-            shaderProgram.setUniformValue("hMirror",mirrorParam.hMirror);
-            shaderProgram.setUniformValue("vMirror",mirrorParam.vMirror);
-
-            colorAdjustParamChanged = false;
+            //绑定FBO，将本次绘制渲染到帧缓冲对象上
+            FBO->bind();
+            glViewport(0,0,pixelWidth,pixelHeight);//FBO使用帧的原始像素大小，需要调整gl视图
+            //在FBO上绘制纹理
+            paintGLTexture();
+            //将FBO转换成QImage并通过信号发射出去，参数true表示对OpenGL坐标进行翻转到光栅坐标
+            QImage image = FBO->toImage(true);
+            emit captureImageSig(image);
+            //释放FBO绑定，重置采集标识
+            FBO->release();
+            needCaptureImage = false;
+            glViewport(0,0,widgetWidth,widgetHeight);//恢复成组件的视图大小
         }
-        //为片段着色器传递新的颜色调整参数
-        if(colorAdjustParamChanged)
-        {
-            shaderProgram.setUniformValue("enableColorAdjust",colorAdjustParam.enableColorAdjust);
-            shaderProgram.setUniformValue("brightness",colorAdjustParam.brightness);
-            shaderProgram.setUniformValue("contrast",colorAdjustParam.contrast);
-            shaderProgram.setUniformValue("saturation",colorAdjustParam.saturation);
-
-            colorAdjustParamChanged = false;
-        }
-        //绘制纹理
-        drawTexture();
-
-        //释放着色器程序和VAO
-        shaderProgram.release();
-        VAO.release();
+        //执行直接渲染到显示组件
+        paintGLTexture();
     }
 }
 /*
@@ -619,6 +609,70 @@ void V4l2Rendering::initTexture()
     }
 }
 /*
+ *@brief:  初始化着色器程序
+ *@date:   2025.08.20
+ */
+void V4l2Rendering::initShaderProgram()
+{
+    shaderProgram.removeAllShaders();
+    shaderProgram.addShaderFromSourceCode(QOpenGLShader::Vertex,vertexShader);//附加顶点着色器和片段着色器
+    shaderProgram.addShaderFromSourceCode(QOpenGLShader::Fragment,fragmentShader);
+    shaderProgram.link();//链接着色器
+    shaderProgram.bind();
+    //使用VBO为数据源，设置解析格式,应用到VAO中
+    //第一个参数为VAO的属性名/location位置索引，与顶点着色器的输入变量关联;
+    //因为location需要在着色器中通过layout (location = *)指定，而该语法在glsl 330版本才提供,为了兼容旧版本，此处使用属性名
+    shaderProgram.setAttributeBuffer("aPos", GL_FLOAT, 0, 3, 5 * sizeof(float));
+    shaderProgram.setAttributeBuffer("aTexCoord", GL_FLOAT, 3*sizeof(float), 2, 5 * sizeof(float));
+    //使能VAO指定名称/location位置索引的属性变量,此处使用属性名，原因同上
+    shaderProgram.enableAttributeArray("aPos");//顶点着色器的顶点坐标信息，意味着opengl使用顶点坐标绘制图形
+    shaderProgram.enableAttributeArray("aTexCoord");//顶点着色器的纹理坐标信息，意味着opengl使用纹理坐标来对纹理进行映射，实现纹理贴图效果
+    //为顶点着色器传递初始化的镜像参数
+    shaderProgram.setUniformValue("hMirror",mirrorParam.hMirror);
+    shaderProgram.setUniformValue("vMirror",mirrorParam.vMirror);
+    //为片段着色器传递初始化的isTVRange参数和颜色调整参数
+    shaderProgram.setUniformValue("isTvRange",isTVRange);
+    shaderProgram.setUniformValue("enableColorAdjust",colorAdjustParam.enableColorAdjust);
+    shaderProgram.setUniformValue("brightness",colorAdjustParam.brightness);
+    shaderProgram.setUniformValue("contrast",colorAdjustParam.contrast);
+    shaderProgram.setUniformValue("saturation",colorAdjustParam.saturation);
+}
+/*
+ *@brief:  基于着色器程序和VAO的操作流程，绘制纹理
+ *@date:   2025.08.20
+ */
+void V4l2Rendering::paintGLTexture()
+{
+    //绑定着色器程序和VAO
+    shaderProgram.bind();
+    VAO.bind();
+
+    //为顶点着色器传递新的镜像参数
+    if(mirrorParamChanged)
+    {
+        shaderProgram.setUniformValue("hMirror",mirrorParam.hMirror);
+        shaderProgram.setUniformValue("vMirror",mirrorParam.vMirror);
+
+        colorAdjustParamChanged = false;
+    }
+    //为片段着色器传递新的颜色调整参数
+    if(colorAdjustParamChanged)
+    {
+        shaderProgram.setUniformValue("enableColorAdjust",colorAdjustParam.enableColorAdjust);
+        shaderProgram.setUniformValue("brightness",colorAdjustParam.brightness);
+        shaderProgram.setUniformValue("contrast",colorAdjustParam.contrast);
+        shaderProgram.setUniformValue("saturation",colorAdjustParam.saturation);
+
+        colorAdjustParamChanged = false;
+    }
+    //绘制纹理
+    drawTexture();
+
+    //释放着色器程序和VAO
+    shaderProgram.release();
+    VAO.release();
+}
+/*
  *@brief:  绘制纹理(流程：绑定纹理对象(关联着色器采样器)->绘制纹理->释放绑定）
  *该函数要在paintGL()中调用，除了有必须的绘制纹理操作，还需要不断的绑定纹理单元，否则可能出现异常
  *@date:   2024.05.17
@@ -686,4 +740,3 @@ void V4l2Rendering::destroyTexture()
        texture3.destroy();
     }
 }
-
