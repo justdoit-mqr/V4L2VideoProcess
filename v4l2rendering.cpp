@@ -67,7 +67,7 @@ void V4l2Rendering::initializeGL()
     VBO.setUsagePattern(QOpenGLBuffer::StaticDraw);//设置为一次修改，多次使用(坐标不变,变得只是像素点)提高优化效率
     //顶点数据(顶点坐标(3float[-1.0f-1.0f])+纹理坐标(2float[0.0f-1.0f]))
     //opengl标准化设备坐标以屏幕中心为原点，坐标在[-1,1]之间。纹理坐标则以左下角为原点，范围为[0,1]
-    //纹理坐标的Y方向需要是反的,因为纹理坐标以左下角为原点，而显示纹理以左上角为坐标原点
+    //这里纹理坐标的Y方向需要设置成反的,因为纹理坐标以左下角为原点，而显示纹理以左上角为坐标原点
     float vertices[] = {
         //顶点坐标            //纹理坐标
         -1.0f, -1.0f, 0.0f,  0.0f, 1.0f,        //左下
@@ -80,11 +80,11 @@ void V4l2Rendering::initializeGL()
     QOpenGLFramebufferObjectFormat fboFormat;
     fboFormat.setAttachment(QOpenGLFramebufferObject::NoAttachment);//2D渲染，不需要深度和模板测试
     fboFormat.setSamples(0);//视频帧非几何渲染，不使用多重采样
-    if(FBO)
-    {
+    if(FBO){
         delete FBO;
-        FBO = new QOpenGLFramebufferObject(pixelWidth,pixelHeight,fboFormat);
     }
+    //离屏FBO的size设置成原始像素帧size乘以裁剪比例
+    FBO = new QOpenGLFramebufferObject(pixelWidth*cropRectParam.width,pixelHeight*cropRectParam.height,fboFormat);
 
     /* 2.初始化着色器
      * 使用GLSL语言编写的顶点着色器和片段着色器程序，集成了部分yuv格式的转换处理。
@@ -123,11 +123,12 @@ void V4l2Rendering::paintGL()
     //仅在纹理对象有效(setData)的情况下才绘制纹理
     if(isVaildTexture)
     {
-        if(needCaptureImage)
+        if(needCaptureImage && FBO->isValid())
         {
             //绑定FBO，将本次绘制渲染到帧缓冲对象上
             FBO->bind();
-            glViewport(0,0,pixelWidth,pixelHeight);//FBO使用帧的原始像素大小，需要调整gl视图
+            glViewport(0,0,pixelWidth*cropRectParam.width,
+                       pixelHeight*cropRectParam.height);//FBO使用帧的原始像素大小乘以裁剪比例，需要调整gl视图
             //在FBO上绘制纹理
             paintGLTexture();
             //将FBO转换成QImage并通过信号发射出去，参数true表示对OpenGL坐标进行翻转到光栅坐标
@@ -160,6 +161,30 @@ void V4l2Rendering::setMirrorParam(const bool &hMirror, const bool &vMirror)
         mirrorParam.vMirror = vMirror;
         mirrorParamChanged = true;
     }
+}
+/*
+ *@brief:  初始化裁剪参数
+ *注:该接口如果需要使用，必须在initializeGL()之前调用，即QOpenGLWidget组件显示之前调用，不支持动态调节裁剪参数。
+ *之所以不支持动态调节，一是这种需求很少，二是静态设置方便离屏渲染Image的处理，FBO的size可以设置成固定的，不用来回改。
+ *@date:   2025.08.22
+ *@param:  left_top_x,left_top_y:裁剪区域的左顶点,不可以超过真实图像宽高
+ *@param:  width,height:裁剪区域的宽高,不可以超过真实图像宽高
+ *@return: bool:true=初始化成功
+ */
+bool V4l2Rendering::initCropRectParam(const uint &left_top_x, const uint &left_top_y,
+                                     const uint &width, const uint &height)
+{
+    if(left_top_x < pixelWidth && left_top_y < pixelHeight &&
+            width <= pixelWidth && height <= pixelHeight)
+    {
+        //对参数进行归一化处理[0,1]
+        cropRectParam.left_top_x = left_top_x*1.0/pixelWidth;
+        cropRectParam.left_top_y = left_top_y*1.0/pixelHeight;
+        cropRectParam.width = width*1.0/pixelWidth;
+        cropRectParam.height = height*1.0/pixelHeight;
+        return true;
+    }
+    return false;
 }
 /*
  *@brief:  设置颜色调整参数
@@ -242,22 +267,27 @@ void V4l2Rendering::updateV4l2Frame(uchar **v4l2FrameData)
 void V4l2Rendering::initVertexShader()
 {
     /*顶点着色器，两个输入(顶点坐标(vec3)+纹理坐标(vec2)),其中顶点坐标转成vec4传给内置变量。
-     *两个uniform全局变量(在外部传递镜像参数)，一个输出(纹理坐标，根据镜像参数将输入的纹理坐标
+     *若干uniform全局变量(在外部传递镜像参数和裁剪参数)，一个输出(纹理坐标，根据镜像参数将输入的纹理坐标
      *进行处理后传给该输出)传递给下一个着色器*/
     vertexShader = QString("attribute vec3 aPos;\n"
                            "attribute vec2 aTexCoord;\n"
-                           "varying vec2 TexCoord;\n"
-                           "\n"
+                           "varying vec2 TexCoord;\n\n"
+                           //镜像参数
                            "uniform bool hMirror;\n"
                            "uniform bool vMirror;\n"
-                           "\n"
+                           //裁剪参数(cropRect[x, y, width, height]为归一化的裁剪区域)
+                           "uniform vec4 cropRect;\n\n"
+                           //主函数
                            "void main(){\n"
-                           "vec2 adjustedTexCoord = aTexCoord;\n"
-                           "\n"
+                           //纹理坐标镜像处理
+                           "vec2 adjustedTexCoord = aTexCoord;\n\n"
                            "if(hMirror){adjustedTexCoord.x = 1.0 - adjustedTexCoord.x;}\n"
-                           "if(vMirror){adjustedTexCoord.y = 1.0 - adjustedTexCoord.y;}\n"
-                           "\n"
-                           "gl_Position = vec4(aPos, 1.0);\n"
+                           "if(vMirror){adjustedTexCoord.y = 1.0 - adjustedTexCoord.y;}\n\n"
+                           //顶点坐标裁剪处理，这里使用数学算法重新计算顶点坐标
+                           "float ndcX = (aTexCoord.x - cropRect.x)*(2.0 / cropRect.z) - 1.0;\n"
+                           "float ndcY = (aTexCoord.y - cropRect.y)*(2.0 / cropRect.w) - 1.0;\n"
+                           "gl_Position = vec4(ndcX, -ndcY, 0.0, 1.0);\n"
+                           //"gl_Position = vec4(aPos, 1.0);\n"//不进行裁剪处理时，直接传递顶点坐标
                            "TexCoord = adjustedTexCoord;\n"
                            "}\n");
 
@@ -630,6 +660,9 @@ void V4l2Rendering::initShaderProgram()
     //为顶点着色器传递初始化的镜像参数
     shaderProgram.setUniformValue("hMirror",mirrorParam.hMirror);
     shaderProgram.setUniformValue("vMirror",mirrorParam.vMirror);
+    //为顶点着色器传递初始化的裁剪参数
+    shaderProgram.setUniformValue("cropRect",QVector4D(cropRectParam.left_top_x,cropRectParam.left_top_y,
+                                                       cropRectParam.width,cropRectParam.height));
     //为片段着色器传递初始化的isTVRange参数和颜色调整参数
     shaderProgram.setUniformValue("isTvRange",isTVRange);
     shaderProgram.setUniformValue("enableColorAdjust",colorAdjustParam.enableColorAdjust);

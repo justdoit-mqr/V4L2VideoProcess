@@ -34,6 +34,8 @@ public:
     void resizeGL(int w,int h);
     void paintGL();
 
+    bool initCropRectParam(const uint &left_top_x,const uint &left_top_y,
+                          const uint &width,const uint &height);
     void setSingleCaptureImage(bool on){this->needCaptureImage = on;}
     void setMirrorParam(const bool &hMirror,const bool &vMirror);
     void setColorAdjustParam(const bool &enableColorAdjust,const float &brightness,
@@ -92,6 +94,15 @@ private:
         bool vMirror = false;//垂直镜像
     }mirrorParam;
     bool mirrorParamChanged = false;//表示镜像参数是否改变
+    //以下参数会封装成一个4维数组传递给顶点着色器程序，由GLSL程序对顶点坐标进行处理，实现裁剪效果
+    struct CropRectParam
+    {
+        //下面的参数使用归一化数据[0,1]，默认不进行裁剪
+        float left_top_x = 0;//裁剪区域的左顶点
+        float left_top_y = 0;
+        float width = 1.0;//裁剪区域的宽高
+        float height = 1.0;
+    }cropRectParam;
     //以下参数会直接传递给片段着色器程序，由GLSL程序在rgb的基础上进行算法处理，实现基础的颜色调整
     struct ColorAdjustmentParam
     {

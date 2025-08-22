@@ -53,6 +53,20 @@ void OpenGLWidget::setMirrorParam(const bool &hMirror, const bool &vMirror)
     v4l2Rendering->setMirrorParam(hMirror,vMirror);
 }
 /*
+ *@brief:  初始化裁剪参数
+ *注:该接口如果需要使用，必须在initializeGL()之前调用，即QOpenGLWidget组件显示之前调用，不支持动态调节裁剪参数。
+ *之所以不支持动态调节，一是这种需求很少，二是静态设置方便离屏渲染Image的处理，FBO的size可以设置成固定的，不用来回改。
+ *@date:   2025.08.22
+ *@param:  left_top_x,left_top_y:裁剪区域的左顶点,不可以超过真实图像宽高
+ *@param:  width,height:裁剪区域的宽高,不可以超过真实图像宽高
+ *@return: bool:true=初始化成功
+ */
+bool OpenGLWidget::initCropRectParam(const uint &left_top_x, const uint &left_top_y,
+                                    const uint &width, const uint &height)
+{
+    return v4l2Rendering->initCropRectParam(left_top_x,left_top_y,width,height);
+}
+/*
  *@brief:  设置颜色调整参数
  *@date:   2025.08.14
  *@param:  enableColorAdjust:是否使能基础颜色调整

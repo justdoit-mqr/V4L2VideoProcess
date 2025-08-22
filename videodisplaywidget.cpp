@@ -24,7 +24,9 @@ VideoDisplayWidget::VideoDisplayWidget(QWidget *parent) :
     videoOutput = new OpenGLWidget(V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT,true,this);
     videoOutput->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
     videoOutput->setFixedSize(FRAME_WIDTH,FRAME_HEIGHT);
-    videoOutput->setMirrorParam(false,false);
+    videoOutput->setFixedSize(750,464);
+    videoOutput->setMirrorParam(true,false);
+    videoOutput->initCropRectParam(0,65,720,445);
     videoOutput->setColorAdjustParam(false,1.0,0.8,1.0);
     //videoOutput->readYuvFileTest("./video/nv21_854x480.yuv",V4L2_PIX_FMT_NV21,FRAME_WIDTH,FRAME_HEIGHT);
     //保存图片

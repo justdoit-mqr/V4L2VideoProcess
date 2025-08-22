@@ -32,6 +32,9 @@ public:
                                 uint pixel_height,bool is_tv_range=true,QWidget *parent = nullptr);
     ~OpenGLWidget();
 
+    //初始化裁剪参数
+    bool initCropRectParam(const uint &left_top_x,const uint &left_top_y,
+                          const uint &width,const uint &height);
     //设置开启/关闭单次采集Image
     void setSingleCaptureImage(bool on);
     //设置镜像参数
